@@ -31,15 +31,18 @@ oscillograms.
 
 | File | Role | Key Details |
 |------|------|-------------|
-| `scripts/display_node.py` | Node 1: OLED display | Subscribes `/mouth/mode`, `/mouth/emotion`, `/mouth/audio_wave`. Publishes `/mouth/current_mode`, `/mouth/current_emotion`. Draws on OLED 0x3D via luma.oled. |
-| `scripts/audio_capture_node.py` | Node 2: audio capture | Captures system audio (PipeWire/Pulse/ALSA). Publishes `/mouth/audio_wave` (Float32MultiArray, 128 pts) and `/audio/level` (Float32). |
+| `scripts/display_node.py` | Node 1: OLED display | Subscribes `/mouth/mode`, `/mouth/emotion`, `/mouth/audio_wave`. Publishes `/mouth/current_mode`, `/mouth/current_emotion`. Draws on OLED 0x3D via luma.oled. Supports `rotate` param for physically flipped display. |
+| `scripts/audio_capture_node.py` | Node 2: audio capture | Captures system audio (PipeWire/Pulse/ALSA). Auto-detects USB sound card. Publishes `/mouth/audio_wave` (Float32MultiArray, 128 pts) and `/audio/level` (Float32). Starts full PipeWire stack (daemon + session manager + pulse). |
 | `scripts/sms_config.py` | Config module | Loads `config/sound_mouth_sync.yaml` + rosparam overrides. Used by both nodes. |
-| `config/sound_mouth_sync.yaml` | Parameters | emotions list, display settings, audio capture settings, hardware (I2C). |
+| `scripts/usb_audio_reset.sh` | USB audio reset | Resets USB audio device via sysfs `authorized` toggle. Run with sudo after reboot if card not detected. |
+| `scripts/audio_diag.sh` | Audio diagnostics | Checks ALSA devices, PipeWire/PulseAudio status, environment, optional capture test. |
+| `config/sound_mouth_sync.yaml` | Parameters | emotions list, display settings, audio capture settings, hardware (I2C, rotate). |
 | `launch/sound_mouth_sync.launch` | Launch file | Loads config, starts both nodes with args. |
 | `resources/emotions/` | Custom PNGs | 128x64 1-bit. Loaded at node startup. Name = emotion name. |
-| `README.md` | User docs | Examples, installation, parameters. |
+| `README.md` | User docs | Examples, installation, parameters, troubleshooting. |
 | `doc/ARCHITECTURE.md` | Architecture | Mermaid diagrams, node descriptions, data flow. |
 | `doc/AI_CONTEXT.md` | This file | AI agent rules, full context. |
+| `ROADMAP.md` | Roadmap | Future plans: animated emotions, advanced visualisation, emotion engine. |
 
 ## Topics
 
@@ -82,7 +85,7 @@ sound_mouth_sync:
   audio_capture:
     source: pipewire_monitor       # pipewire_monitor | pulse_monitor | alsa
     pulse_source: ""               # auto-detect
-    device: "plughw:2,0"           # ALSA device
+    device: ""                     # ALSA device (auto-detect USB card if empty)
     rate: 16000                    # sample rate
     chunk_size: 1024               # samples per chunk
     wave_width: 128                # oscillogram width
@@ -91,6 +94,7 @@ sound_mouth_sync:
     i2c_address: 0x3D              # = 61 decimal
     width: 128
     height: 64
+    rotate: 2                      # 0=normal, 2=180° (display mounted upside-down)
 ```
 
 ## Valid Emotions (built-in)
@@ -109,11 +113,20 @@ Custom emotions: place PNG in `resources/emotions/<name>.png`.
    returns to `emotion` mode, showing the last set emotion.
 4. Manual `/mouth/mode` messages override auto-mode state.
 
+## Audio Capture Startup
+
+On startup, `audio_capture_node` performs:
+1. Auto-detects USB sound card via `/proc/asound/cards`
+2. Logs all ALSA devices and PulseAudio sinks/sources for diagnostics
+3. Ensures full PipeWire stack is running: `pipewire` daemon + session manager (`pipewire-media-session` or `wireplumber`) + `pipewire-pulse`
+4. Finds the correct monitor source (prefers USB audio card)
+5. Warns after 200 consecutive silent chunks if capture may be misconfigured
+
 ## Audio Capture Fallback Chain
 
 ```
 pipewire_monitor (pw-record)
-  → on 2+ failures with "Broken pipe" →
+  → if pipewire daemon not running or 2+ failures →
 pulse_monitor (parec with auto-detected monitor source)
   → if parec/pactl unavailable →
 error logged, retry every 5s
@@ -121,18 +134,25 @@ error logged, retry every 5s
 
 ## Hardware
 
-- Display: SSD1306 OLED, 128x64 pixels, monochrome, I2C bus 1, address 0x3D
-- Audio: system sound card output (captured via loopback, not microphone by default)
-- Platform: Raspberry Pi 5, Ubuntu, ROS Noetic
+- Display: SSD1306 OLED, 128x64 pixels, monochrome, I2C bus 1, address 0x3D, mounted upside-down (rotate=2)
+- Audio: GeneralPlus USB Audio Device (card 2), single speaker, USB path 1-1.4
+- Platform: Raspberry Pi 5, Ubuntu 20.04, ROS Noetic
 
 ## Dependencies
 
 - Python: `luma.oled`, `Pillow`, `PyYAML`, `rospy`, `rospkg`
-- System: `pipewire` + `pipewire-pulse` (or `pulseaudio-utils`), `alsa-utils`
+- System: `pipewire` + `pipewire-pulse` + `pipewire-media-session` (or `wireplumber`), `alsa-utils`
 - ROS: `rospy`, `std_msgs`
+
+## Known Issues
+
+- USB sound card may not initialize after reboot. Fix: `sudo scripts/usb_audio_reset.sh`
+- PipeWire 0.2.x config at `/etc/pipewire/pipewire.conf` is incompatible with PipeWire 1.0.7. The node now ignores `PIPEWIRE_CONFIG_FILE` env var and uses the system default config.
+- Emotions are static (no animation). See `ROADMAP.md` for planned animated emotions.
 
 ## Change Log
 
 | Date | Author | Change |
 |------|--------|--------|
 | 2026-03-19 | AI Agent | Initial creation. Two nodes: display_node + audio_capture_node. |
+| 2026-03-19 | AI Agent | Fix OLED inversion (rotate=2). Rewrite audio capture: proper PipeWire session startup, USB card auto-detect, startup diagnostics, silence detection warning. Add usb_audio_reset.sh, audio_diag.sh, ROADMAP.md. |

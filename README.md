@@ -175,6 +175,59 @@ sudo apt install pipewire pipewire-pulse alsa-utils
 | `silence_return_sec` | `3.0` | Секунд тишины до возврата к эмоции |
 | `source` | `pipewire_monitor` | Источник захвата: `pipewire_monitor`, `pulse_monitor`, `alsa` |
 | `pulse_source` | `""` (авто) | Имя Pulse-источника |
-| `device` | `plughw:2,0` | ALSA-устройство (только для `alsa`) |
+| `device` | `""` (авто) | ALSA-устройство (авто-определение USB-карты если пусто) |
 | `rate` | `16000` | Частота дискретизации (Гц) |
 | `chunk_size` | `1024` | Сэмплов на один фрагмент |
+
+## Устранение неполадок
+
+### USB-звуковая карта не работает после перезагрузки
+
+После перезагрузки Raspberry Pi USB-звуковая карта может не инициализироваться.
+Проверить: `aplay -l` — если USB Audio Device отсутствует в списке:
+
+```bash
+# Сброс USB-устройства (без физического переподключения)
+sudo $(rospack find sound_mouth_sync)/scripts/usb_audio_reset.sh
+
+# Проверить, что карта появилась
+aplay -l | grep USB
+```
+
+### Осциллограмма не отображается при воспроизведении звука
+
+Запустите диагностику:
+
+```bash
+$(rospack find sound_mouth_sync)/scripts/audio_diag.sh
+# Или с тестом захвата:
+$(rospack find sound_mouth_sync)/scripts/audio_diag.sh --test
+```
+
+Типичные причины:
+- PipeWire daemon не запущен (нода попытается запустить автоматически)
+- Нет session manager (pipewire-media-session / wireplumber)
+- USB-карта не является default sink в PulseAudio
+- Переменная `PIPEWIRE_CONFIG_FILE` указывает на несовместимый конфиг
+
+Ручная проверка:
+
+```bash
+# Запущены ли все компоненты PipeWire?
+pgrep -a pipewire
+
+# PulseAudio sinks (должен быть USB Audio)
+pactl list sinks short
+
+# Monitor-источники (нужен .monitor для захвата)
+pactl list sources short
+
+# Тест: проиграть звук и послушать уровень
+rostopic echo /audio/level
+```
+
+### OLED-дисплей показывает перевёрнутое изображение
+
+Параметр `rotate` в `config/sound_mouth_sync.yaml` секция `hardware`:
+- `0` — нормальная ориентация
+- `2` — поворот на 180° (по умолчанию, для перевёрнутого монтажа)

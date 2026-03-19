@@ -36,7 +36,7 @@ graph LR
 
 **Файл:** `scripts/display_node.py`
 
-Управляет OLED-дисплеем. Работает в одном из двух режимов:
+Управляет OLED-дисплеем. Поддерживает параметр `rotate` (0/1/2/3) для физически перевёрнутого монтажа (по умолчанию `rotate=2` — дисплей перевёрнут на 180°). Работает в одном из двух режимов:
 
 ```mermaid
 stateDiagram-v2
@@ -86,12 +86,24 @@ graph TD
     WAVE --> PubWave["/mouth/audio_wave<br/>Float32MultiArray"]
 ```
 
+**При запуске:**
+1. Автоопределение USB-звуковой карты через `/proc/asound/cards`
+2. Логирование всех ALSA-устройств и PulseAudio sink/source для диагностики
+3. Запуск полного стека PipeWire (daemon + session manager + pipewire-pulse)
+4. Определение правильного monitor-источника (предпочитает USB-карту)
+
 **Приоритет источников:**
 1. `pipewire_monitor` — pw-record, захват с вывода на динамики (по умолчанию)
 2. `pulse_monitor` — parec, fallback при недоступности PipeWire
-3. `alsa` — arecord, захват с микрофона
+3. `alsa` — arecord, захват напрямую с ALSA-устройства
 
-**Автоматический fallback:** при ошибках PipeWire (Broken pipe) автоматически переключается на PulseAudio monitor.
+**Автоматический fallback:** если PipeWire daemon не запущен или pw-record падает 2+ раз, переключается на parec (PulseAudio monitor). Предупреждает после 200 тихих чанков подряд.
+
+### 4. Утилиты
+
+**`scripts/usb_audio_reset.sh`** — сброс USB-звуковой карты через sysfs после перезагрузки.
+
+**`scripts/audio_diag.sh`** — диагностика аудио: ALSA-устройства, PipeWire/PulseAudio статус, проверка сокетов, тест захвата.
 
 ### 3. sms_config.py
 
@@ -124,16 +136,20 @@ graph LR
 sound_mouth_sync/
 ├── package.xml                    # ROS package manifest
 ├── CMakeLists.txt                 # Build configuration
+├── ROADMAP.md                     # Future plans
 ├── config/
-│   └── sound_mouth_sync.yaml      # All parameters
+│   └── sound_mouth_sync.yaml      # All parameters (incl. rotate, device auto-detect)
 ├── launch/
 │   └── sound_mouth_sync.launch    # Launches both nodes
 ├── scripts/
-│   ├── display_node.py            # Node 1: OLED display
-│   ├── audio_capture_node.py      # Node 2: audio capture
-│   └── sms_config.py              # Config module
+│   ├── display_node.py            # Node 1: OLED display (rotate support)
+│   ├── audio_capture_node.py      # Node 2: audio capture (USB auto-detect, PipeWire stack)
+│   ├── sms_config.py              # Config module
+│   ├── usb_audio_reset.sh         # USB audio device reset after reboot
+│   └── audio_diag.sh              # Audio diagnostics script
 ├── resources/
-│   └── emotions/                  # Custom emotion PNGs (128x64, 1-bit)
+│   ├── emotions/                  # Custom emotion PNGs (128x64, 1-bit)
+│   └── README_EMOTIONS.md         # Guide for custom emotions
 ├── doc/
 │   ├── ARCHITECTURE.md            # This file
 │   └── AI_CONTEXT.md              # Context for AI developers

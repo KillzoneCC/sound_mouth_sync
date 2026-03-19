@@ -26,10 +26,7 @@ sound_mouth_sync:
     silence_return_sec: 3.0          # seconds of silence before returning to emotion mode
 
   audio_capture:
-    source: pipewire_monitor         # pipewire_monitor | pulse_monitor | alsa
-    pulse_source: ""                 # auto-detect if empty
-    device: "plughw:2,0"             # ALSA device (source:=alsa only)
-    rate: 16000                      # sample rate Hz
+    rate: 48000                      # sample rate Hz (48000 = native USB card rate)
     chunk_size: 1024                 # samples per chunk
     wave_width: 128                  # oscillogram points (match display width)
 
@@ -38,3 +35,4 @@ sound_mouth_sync:
     i2c_address: 0x3D
     width: 128
     height: 64
+    rotate: 2                        # 0=normal, 2=180° (display mounted upside-down)

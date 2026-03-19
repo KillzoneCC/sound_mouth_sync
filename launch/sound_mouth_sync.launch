@@ -18,10 +18,7 @@
   <arg name="silence_return_sec" default="3.0" doc="Seconds of silence before returning to emotion"/>
 
   <!-- Audio capture args -->
-  <arg name="source" default="pipewire_monitor" doc="pipewire_monitor | pulse_monitor | alsa"/>
-  <arg name="pulse_source" default="" doc="PulseAudio source (auto if empty)"/>
-  <arg name="device" default="plughw:2,0" doc="ALSA device (source:=alsa only)"/>
-  <arg name="rate" default="16000" doc="Sample rate Hz"/>
+  <arg name="rate" default="48000" doc="Sample rate Hz (48000 = native USB card rate)"/>
   <arg name="chunk_size" default="1024" doc="Samples per chunk"/>
 
   <!-- Node 1: OLED display -->
@@ -31,11 +28,8 @@
     <param name="silence_return_sec" value="$(arg silence_return_sec)"/>
   </node>
 
-  <!-- Node 2: Audio capture -->
+  <!-- Node 2: Audio capture (PulseAudio monitor of USB sink) -->
   <node name="mouth_audio_capture_node" pkg="sound_mouth_sync" type="audio_capture_node.py" output="screen">
-    <param name="source" value="$(arg source)"/>
-    <param name="pulse_source" value="$(arg pulse_source)"/>
-    <param name="device" value="$(arg device)"/>
     <param name="rate" value="$(arg rate)"/>
     <param name="chunk_size" value="$(arg chunk_size)"/>
   </node>

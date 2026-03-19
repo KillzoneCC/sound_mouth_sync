@@ -69,6 +69,7 @@ def get_hardware_settings():
         "i2c_address": 0x3D,
         "width": 128,
         "height": 64,
+        "rotate": 0,
     })
 
 
@@ -93,10 +94,7 @@ def get_display_settings():
 
 def get_audio_capture_config():
     return _get_section("audio_capture", {
-        "source": "pipewire_monitor",
-        "pulse_source": "",
-        "device": "plughw:2,0",
-        "rate": 16000,
+        "rate": 48000,
         "chunk_size": 1024,
         "wave_width": 128,
     })

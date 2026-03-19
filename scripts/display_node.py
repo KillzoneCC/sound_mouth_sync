@@ -152,6 +152,7 @@ def main():
     H = hw.get("height", 64)
     I2C_PORT = hw.get("i2c_port", 1)
     I2C_ADDRESS = hw.get("i2c_address", 0x3D)
+    ROTATE = int(hw.get("rotate", 0))
 
     emotions_cfg = sms_config.get_emotions_config()
     display_cfg = sms_config.get_display_settings()
@@ -195,8 +196,8 @@ def main():
     if _LUMA_AVAILABLE:
         try:
             serial = i2c(port=I2C_PORT, address=I2C_ADDRESS)
-            device = ssd1306(serial, width=W, height=H)
-            rospy.loginfo("display_node: OLED SSD1306 %dx%d on I2C 0x%02X ready", W, H, I2C_ADDRESS)
+            device = ssd1306(serial, width=W, height=H, rotate=ROTATE)
+            rospy.loginfo("display_node: OLED SSD1306 %dx%d on I2C 0x%02X ready (rotate=%d)", W, H, I2C_ADDRESS, ROTATE)
         except Exception as e:
             rospy.logwarn("display_node: OLED unavailable: %s", e)
             device = None
@@ -254,17 +255,17 @@ def main():
     def on_audio_wave(msg):
         if not msg.data:
             return
-        last_audio_time[0] = time.time()
         values = list(msg.data)
 
-        # Auto-switch to oscillogram when sound detected
-        if auto_mode and emotion_mode[0]:
-            rms = 0.0
-            n = len(values)
-            if n > 0:
-                total = sum(v * v for v in values)
-                rms = (total / n) ** 0.5
-            if rms >= _SILENCE_THRESHOLD:
+        rms = 0.0
+        n = len(values)
+        if n > 0:
+            total = sum(v * v for v in values)
+            rms = (total / n) ** 0.5
+
+        if rms >= _SILENCE_THRESHOLD:
+            last_audio_time[0] = time.time()
+            if auto_mode and emotion_mode[0]:
                 emotion_mode[0] = False
                 mode_pub.publish(String(data="oscillogram"))
 
