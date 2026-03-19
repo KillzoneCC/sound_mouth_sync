@@ -182,6 +182,33 @@ def _pa_enable_tcp(port=4713):
     return False
 
 
+def _pa_write_client_conf():
+    """Write /etc/pulse/client.conf so any user in the container can reach PA."""
+    conf_dir = "/etc/pulse"
+    conf_path = os.path.join(conf_dir, "client.conf")
+    env = _pa_env()
+    xdg = env.get("XDG_RUNTIME_DIR", "")
+    socket_path = os.path.join(xdg, "pulse", "native") if xdg else ""
+
+    lines = []
+    if socket_path and os.path.exists(socket_path):
+        lines.append("default-server = unix:{}".format(socket_path))
+    else:
+        lines.append("default-server = tcp:127.0.0.1:4713")
+    lines.append("autospawn = no")
+    lines.append("")
+
+    try:
+        os.makedirs(conf_dir, exist_ok=True)
+        with open(conf_path, "w") as f:
+            f.write("\n".join(lines))
+        if socket_path and os.path.exists(socket_path):
+            os.chmod(os.path.dirname(socket_path), 0o755)
+        rospy.loginfo("audio_capture: wrote %s → %s", conf_path, lines[0])
+    except OSError as e:
+        rospy.logwarn("audio_capture: cannot write %s: %s", conf_path, e)
+
+
 # ---------------------------------------------------------------------------
 # Waveform helpers
 # ---------------------------------------------------------------------------
@@ -219,6 +246,7 @@ def main():
         return
 
     _pa_enable_tcp()
+    _pa_write_client_conf()
 
     pub_wave = rospy.Publisher("/mouth/audio_wave", Float32MultiArray, queue_size=5)
     pub_level = rospy.Publisher("/audio/level", Float32, queue_size=10)
