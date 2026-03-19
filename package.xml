@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>sound_mouth_sync</name>
+  <version>1.0.0</version>
+  <description>
+    Mouth display driver for Ainex robot: emotion rendering and audio oscillogram
+    on OLED SSD1306 128x64 (I2C 0x3D). Includes autonomous audio capture from
+    system output (PipeWire/PulseAudio/ALSA).
+  </description>
+
+  <maintainer email="ainex@todo.todo">ainex</maintainer>
+  <license>BSD</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <exec_depend>rospy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+
+  <export/>
+</package>

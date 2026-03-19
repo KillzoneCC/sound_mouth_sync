@@ -1,0 +1,40 @@
+# sound_mouth_sync configuration
+# Loaded via rosparam in sound_mouth_sync.launch
+
+sound_mouth_sync:
+  emotions:
+    list:
+      - neutral
+      - happy
+      - sad
+      - angry
+      - surprised
+      - excited
+      - sleepy
+      - love
+      - confused
+      - scared
+      - bored
+      - calm
+      - disgusted
+      - tired
+    default_emotion: neutral
+
+  display:
+    default_emotion: neutral
+    auto_mode: true                  # auto-switch oscillogram on sound, back to emotion on silence
+    silence_return_sec: 3.0          # seconds of silence before returning to emotion mode
+
+  audio_capture:
+    source: pipewire_monitor         # pipewire_monitor | pulse_monitor | alsa
+    pulse_source: ""                 # auto-detect if empty
+    device: "plughw:2,0"             # ALSA device (source:=alsa only)
+    rate: 16000                      # sample rate Hz
+    chunk_size: 1024                 # samples per chunk
+    wave_width: 128                  # oscillogram points (match display width)
+
+  hardware:
+    i2c_port: 1
+    i2c_address: 0x3D
+    width: 128
+    height: 64

@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<!--
+  sound_mouth_sync: mouth display (emotions / oscillogram) + audio capture.
+
+  Usage:
+    roslaunch sound_mouth_sync sound_mouth_sync.launch
+    roslaunch sound_mouth_sync sound_mouth_sync.launch default_emotion:=happy
+    roslaunch sound_mouth_sync sound_mouth_sync.launch source:=pulse_monitor
+    roslaunch sound_mouth_sync sound_mouth_sync.launch auto_mode:=false
+-->
+<launch>
+  <!-- Load config into rosparam -->
+  <rosparam file="$(find sound_mouth_sync)/config/sound_mouth_sync.yaml"/>
+
+  <!-- Display node args -->
+  <arg name="default_emotion" default="neutral" doc="Emotion shown at startup"/>
+  <arg name="auto_mode" default="true" doc="Auto-switch to oscillogram on sound"/>
+  <arg name="silence_return_sec" default="3.0" doc="Seconds of silence before returning to emotion"/>
+
+  <!-- Audio capture args -->
+  <arg name="source" default="pipewire_monitor" doc="pipewire_monitor | pulse_monitor | alsa"/>
+  <arg name="pulse_source" default="" doc="PulseAudio source (auto if empty)"/>
+  <arg name="device" default="plughw:2,0" doc="ALSA device (source:=alsa only)"/>
+  <arg name="rate" default="16000" doc="Sample rate Hz"/>
+  <arg name="chunk_size" default="1024" doc="Samples per chunk"/>
+
+  <!-- Node 1: OLED display -->
+  <node name="mouth_display_node" pkg="sound_mouth_sync" type="display_node.py" output="screen">
+    <param name="default_emotion" value="$(arg default_emotion)"/>
+    <param name="auto_mode" value="$(arg auto_mode)"/>
+    <param name="silence_return_sec" value="$(arg silence_return_sec)"/>
+  </node>
+
+  <!-- Node 2: Audio capture -->
+  <node name="mouth_audio_capture_node" pkg="sound_mouth_sync" type="audio_capture_node.py" output="screen">
+    <param name="source" value="$(arg source)"/>
+    <param name="pulse_source" value="$(arg pulse_source)"/>
+    <param name="device" value="$(arg device)"/>
+    <param name="rate" value="$(arg rate)"/>
+    <param name="chunk_size" value="$(arg chunk_size)"/>
+  </node>
+</launch>
