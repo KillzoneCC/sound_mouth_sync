@@ -17,6 +17,7 @@ install(FILES scripts/sms_config.py
 install(PROGRAMS
   scripts/usb_audio_reset.sh
   scripts/audio_diag.sh
+  scripts/setup_host_audio.sh
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

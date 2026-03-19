@@ -32,16 +32,18 @@ oscillograms.
 | File | Role | Key Details |
 |------|------|-------------|
 | `scripts/display_node.py` | Node 1: OLED display | Subscribes `/mouth/mode`, `/mouth/emotion`, `/mouth/audio_wave`. Publishes `/mouth/current_mode`, `/mouth/current_emotion`. Draws on OLED 0x3D via luma.oled. Supports `rotate` param for physically flipped display. |
-| `scripts/audio_capture_node.py` | Node 2: audio capture | Captures system audio (PipeWire/Pulse/ALSA). Auto-detects USB sound card. Publishes `/mouth/audio_wave` (Float32MultiArray, 128 pts) and `/audio/level` (Float32). Starts full PipeWire stack (daemon + session manager + pulse). |
+| `scripts/audio_capture_node.py` | Node 2: audio capture | Starts native PulseAudio, creates ALSA sink for USB card, enables TCP:4713 for host access. Captures via `parec` from `usb_output.monitor`. Publishes `/mouth/audio_wave` (Float32MultiArray, 128 pts) and `/audio/level` (Float32). |
 | `scripts/sms_config.py` | Config module | Loads `config/sound_mouth_sync.yaml` + rosparam overrides. Used by both nodes. |
 | `scripts/usb_audio_reset.sh` | USB audio reset | Resets USB audio device via sysfs `authorized` toggle. Run with sudo after reboot if card not detected. |
-| `scripts/audio_diag.sh` | Audio diagnostics | Checks ALSA devices, PipeWire/PulseAudio status, environment, optional capture test. |
+| `scripts/audio_diag.sh` | Audio diagnostics | Checks ALSA devices, PulseAudio status, environment, optional capture test. |
+| `scripts/setup_host_audio.sh` | Host audio redirect | Run on Raspberry Pi host to route audio to Docker PulseAudio (sets PULSE_SERVER). |
 | `config/sound_mouth_sync.yaml` | Parameters | emotions list, display settings, audio capture settings, hardware (I2C, rotate). |
 | `launch/sound_mouth_sync.launch` | Launch file | Loads config, starts both nodes with args. |
 | `resources/emotions/` | Custom PNGs | 128x64 1-bit. Loaded at node startup. Name = emotion name. |
 | `README.md` | User docs | Examples, installation, parameters, troubleshooting. |
 | `doc/ARCHITECTURE.md` | Architecture | Mermaid diagrams, node descriptions, data flow. |
 | `doc/AI_CONTEXT.md` | This file | AI agent rules, full context. |
+| `doc/AUDIO_PLAYBACK.md` | Audio playback guide | Developer guide: how to play sound so oscillogram works. Docker + host. |
 | `ROADMAP.md` | Roadmap | Future plans: animated emotions, advanced visualisation, emotion engine. |
 
 ## Topics
@@ -83,10 +85,7 @@ sound_mouth_sync:
     auto_mode: true                # auto-switch to oscillogram on sound
     silence_return_sec: 3.0        # seconds before returning to emotion
   audio_capture:
-    source: pipewire_monitor       # pipewire_monitor | pulse_monitor | alsa
-    pulse_source: ""               # auto-detect
-    device: ""                     # ALSA device (auto-detect USB card if empty)
-    rate: 16000                    # sample rate
+    rate: 48000                    # sample rate Hz (must match USB card native rate)
     chunk_size: 1024               # samples per chunk
     wave_width: 128                # oscillogram width
   hardware:
@@ -116,20 +115,26 @@ Custom emotions: place PNG in `resources/emotions/<name>.png`.
 ## Audio Capture Startup
 
 On startup, `audio_capture_node` performs:
-1. Auto-detects USB sound card via `/proc/asound/cards`
-2. Logs all ALSA devices and PulseAudio sinks/sources for diagnostics
-3. Ensures full PipeWire stack is running: `pipewire` daemon + session manager (`pipewire-media-session` or `wireplumber`) + `pipewire-pulse`
-4. Finds the correct monitor source (prefers USB audio card)
-5. Warns after 200 consecutive silent chunks if capture may be misconfigured
+1. Starts native PulseAudio daemon (kills pipewire-pulse if present)
+2. Auto-detects USB sound card via `/proc/asound/cards`
+3. Loads `module-alsa-sink` for the USB card → creates `usb_output` sink
+4. Sets `usb_output` as default sink
+5. Loads `module-native-protocol-tcp` (port 4713, auth-anonymous) for host access
+6. Starts `parec` capturing from `usb_output.monitor`
+7. Warns after 200 consecutive silent chunks if capture may be misconfigured
 
-## Audio Capture Fallback Chain
+## Audio Architecture
+
+PulseAudio inside Docker is the sole audio server owning the USB card. All audio
+(from Docker nodes and from the Raspberry Pi host via TCP:4713) flows through it.
+The monitor source captures everything for the oscillogram.
 
 ```
-pipewire_monitor (pw-record)
-  → if pipewire daemon not running or 2+ failures →
-pulse_monitor (parec with auto-detected monitor source)
-  → if parec/pactl unavailable →
-error logged, retry every 5s
+Docker:  TTS/paplay → PulseAudio → usb_output (ALSA) → USB speaker
+                          ↓ .monitor
+                   audio_capture_node → /mouth/audio_wave → display_node → OLED
+
+Host:    VLC/aplay → PULSE_SERVER=tcp:127.0.0.1:4713 → (same PulseAudio above)
 ```
 
 ## Hardware
@@ -140,14 +145,16 @@ error logged, retry every 5s
 
 ## Dependencies
 
-- Python: `luma.oled`, `Pillow`, `PyYAML`, `rospy`, `rospkg`
-- System: `pipewire` + `pipewire-pulse` + `pipewire-media-session` (or `wireplumber`), `alsa-utils`
+- Python: `luma.oled`, `Pillow`, `numpy`, `PyYAML`, `rospy`, `rospkg`
+- System (Docker): `pulseaudio`, `pulseaudio-utils`, `alsa-utils`
+- System (Host): `pulseaudio-utils` (for `pactl`, `paplay`)
 - ROS: `rospy`, `std_msgs`
 
 ## Known Issues
 
 - USB sound card may not initialize after reboot. Fix: `sudo scripts/usb_audio_reset.sh`
-- PipeWire 0.2.x config at `/etc/pipewire/pipewire.conf` is incompatible with PipeWire 1.0.7. The node now ignores `PIPEWIRE_CONFIG_FILE` env var and uses the system default config.
+- Host applications (VLC, aplay) must set `PULSE_SERVER=tcp:127.0.0.1:4713` to route audio through Docker's PulseAudio. Use `scripts/setup_host_audio.sh` for convenience.
+- The USB card has no functional hardware loopback — PulseAudio monitor is the only way to capture playback.
 - Emotions are static (no animation). See `ROADMAP.md` for planned animated emotions.
 
 ## Change Log
@@ -156,3 +163,4 @@ error logged, retry every 5s
 |------|--------|--------|
 | 2026-03-19 | AI Agent | Initial creation. Two nodes: display_node + audio_capture_node. |
 | 2026-03-19 | AI Agent | Fix OLED inversion (rotate=2). Rewrite audio capture: proper PipeWire session startup, USB card auto-detect, startup diagnostics, silence detection warning. Add usb_audio_reset.sh, audio_diag.sh, ROADMAP.md. |
+| 2026-03-19 | AI Agent | Rewrite audio capture to native PulseAudio (no PipeWire). Add TCP:4713 for host access, setup_host_audio.sh, AUDIO_PLAYBACK.md developer guide. Update all docs. |

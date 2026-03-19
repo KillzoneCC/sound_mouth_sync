@@ -13,11 +13,16 @@ graph LR
         YAML[sound_mouth_sync.yaml]
     end
 
-    SystemAudio["System Audio Output<br/>(speakers)"]
+    HostApps["Host apps (VLC, aplay)<br/>PULSE_SERVER=tcp:localhost:4713"]
     OLED["OLED SSD1306 128x64<br/>I2C 0x3D"]
+    USB["USB Sound Card<br/>plughw:N,0"]
     OtherNodes["Other ROS nodes<br/>(TTS, emotions, etc.)"]
+    PA["PulseAudio Server<br/>(usb_output sink, TCP:4713)"]
 
-    SystemAudio -->|"PipeWire / Pulse / ALSA"| ACN
+    OtherNodes -->|"paplay / sound_play"| PA
+    HostApps -->|"TCP :4713"| PA
+    PA -->|"ALSA"| USB
+    PA -->|"usb_output.monitor"| ACN
     ACN -->|"/mouth/audio_wave<br/>Float32MultiArray"| DN
     ACN -->|"/audio/level<br/>Float32"| OtherNodes
     OtherNodes -->|"/mouth/mode<br/>String"| DN
@@ -65,20 +70,22 @@ stateDiagram-v2
 
 **Файл:** `scripts/audio_capture_node.py`
 
-Захватывает ВСЕ звуки системы (не конкретный файл).
+Захватывает ВСЕ звуки системы (не конкретный файл). Является единственным «владельцем» аудио — запускает PulseAudio-сервер.
 
 ```mermaid
 graph TD
-    subgraph captureMethods [Capture Methods]
-        PW["pw-record<br/>(PipeWire monitor)"]
-        PA["parec<br/>(PulseAudio monitor)"]
-        AL["arecord<br/>(ALSA)"]
-    end
+    PA["PulseAudio Server"]
+    SINK["module-alsa-sink<br/>usb_output → plughw:N,0"]
+    TCP["module-native-protocol-tcp<br/>port 4713"]
+    MON["usb_output.monitor"]
+    PAREC["parec (subprocess)"]
 
-    PW --> PCM["Raw PCM s16_le mono"]
-    PA --> PCM
-    AL --> PCM
+    PA --> SINK
+    PA --> TCP
+    SINK --> MON
+    MON --> PAREC
 
+    PAREC --> PCM["Raw PCM s16_le mono"]
     PCM --> RMS["RMS level<br/>(0..1)"]
     PCM --> WAVE["Downsample to<br/>128 points (-1..1)"]
 
@@ -87,23 +94,24 @@ graph TD
 ```
 
 **При запуске:**
-1. Автоопределение USB-звуковой карты через `/proc/asound/cards`
-2. Логирование всех ALSA-устройств и PulseAudio sink/source для диагностики
-3. Запуск полного стека PipeWire (daemon + session manager + pipewire-pulse)
-4. Определение правильного monitor-источника (предпочитает USB-карту)
+1. Запуск нативного PulseAudio (`pulseaudio --start --exit-idle-time=-1`)
+2. Автоопределение USB-звуковой карты через `/proc/asound/cards`
+3. Загрузка `module-alsa-sink` → создание `usb_output` sink
+4. Установка `usb_output` как default sink
+5. Загрузка `module-native-protocol-tcp` (порт 4713, auth-anonymous) для доступа с хоста
+6. Запуск `parec -d usb_output.monitor` для захвата
 
-**Приоритет источников:**
-1. `pipewire_monitor` — pw-record, захват с вывода на динамики (по умолчанию)
-2. `pulse_monitor` — parec, fallback при недоступности PipeWire
-3. `alsa` — arecord, захват напрямую с ALSA-устройства
+**TCP-доступ для хоста:** приложения на Raspberry Pi могут воспроизводить звук через `PULSE_SERVER=tcp:127.0.0.1:4713`. Этот звук проходит через `usb_output` → USB-карту → динамик, и одновременно захватывается через `.monitor` для осциллограммы.
 
-**Автоматический fallback:** если PipeWire daemon не запущен или pw-record падает 2+ раз, переключается на parec (PulseAudio monitor). Предупреждает после 200 тихих чанков подряд.
+Предупреждает после 200 тихих чанков подряд.
 
 ### 4. Утилиты
 
 **`scripts/usb_audio_reset.sh`** — сброс USB-звуковой карты через sysfs после перезагрузки.
 
-**`scripts/audio_diag.sh`** — диагностика аудио: ALSA-устройства, PipeWire/PulseAudio статус, проверка сокетов, тест захвата.
+**`scripts/audio_diag.sh`** — диагностика аудио: ALSA-устройства, PulseAudio статус, проверка сокетов, тест захвата.
+
+**`scripts/setup_host_audio.sh`** — настройка хоста (Raspberry Pi) для маршрутизации звука в Docker PulseAudio (устанавливает `PULSE_SERVER=tcp:127.0.0.1:4713`).
 
 ### 3. sms_config.py
 
@@ -143,16 +151,18 @@ sound_mouth_sync/
 │   └── sound_mouth_sync.launch    # Launches both nodes
 ├── scripts/
 │   ├── display_node.py            # Node 1: OLED display (rotate support)
-│   ├── audio_capture_node.py      # Node 2: audio capture (USB auto-detect, PipeWire stack)
+│   ├── audio_capture_node.py      # Node 2: audio capture (PulseAudio, USB auto-detect)
 │   ├── sms_config.py              # Config module
 │   ├── usb_audio_reset.sh         # USB audio device reset after reboot
-│   └── audio_diag.sh              # Audio diagnostics script
+│   ├── audio_diag.sh              # Audio diagnostics script
+│   └── setup_host_audio.sh        # Host → Docker audio redirect setup
 ├── resources/
 │   ├── emotions/                  # Custom emotion PNGs (128x64, 1-bit)
 │   └── README_EMOTIONS.md         # Guide for custom emotions
 ├── doc/
 │   ├── ARCHITECTURE.md            # This file
-│   └── AI_CONTEXT.md              # Context for AI developers
+│   ├── AI_CONTEXT.md              # Context for AI developers
+│   └── AUDIO_PLAYBACK.md          # Developer guide: sound playback + oscillogram
 └── README.md                      # User-facing documentation
 ```
 
@@ -170,3 +180,6 @@ sound_mouth_sync/
 - Устанавливать эмоцию: `rostopic pub /mouth/emotion std_msgs/String "data: 'happy'"`
 - Переключать режим: `rostopic pub /mouth/mode std_msgs/String "data: 'emotion'"`
 - Слушать уровень звука: `rostopic echo /audio/level`
+- Воспроизводить звук через PulseAudio (внутри Docker — автоматически, с хоста — через `PULSE_SERVER=tcp:127.0.0.1:4713`)
+
+Подробное руководство по воспроизведению звука: [AUDIO_PLAYBACK.md](AUDIO_PLAYBACK.md)

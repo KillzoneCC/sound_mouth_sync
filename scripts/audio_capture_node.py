@@ -7,7 +7,8 @@ waveform for oscillogram rendering on the mouth display.
 Strategy:
   1. Ensure PulseAudio is running (native, NOT PipeWire-Pulse).
   2. Create a PulseAudio ALSA sink pointing at the USB sound card.
-  3. Capture from that sink's ``.monitor`` source via ``parec``.
+  3. Enable TCP access (port 4713) so host-side apps can play through this PA.
+  4. Capture from that sink's ``.monitor`` source via ``parec``.
 
 This guarantees we capture everything played through PulseAudio, regardless of
 which program produces the sound (TTS, music, ROS nodes, etc.).
@@ -161,6 +162,26 @@ def _pa_set_default(sink_name):
         rospy.loginfo("audio_capture: default PA sink → %s", sink_name)
 
 
+def _pa_enable_tcp(port=4713):
+    """Load module-native-protocol-tcp so host applications can connect."""
+    ok, modules = _pa_run(["pactl", "list", "modules", "short"])
+    if ok and "module-native-protocol-tcp" in modules:
+        rospy.loginfo("audio_capture: PA TCP module already loaded")
+        return True
+
+    ok, _ = _pa_run([
+        "pactl", "load-module", "module-native-protocol-tcp",
+        "port=%d" % port, "auth-anonymous=1",
+    ])
+    if ok:
+        rospy.loginfo("audio_capture: PA TCP access enabled on port %d (auth-anonymous)", port)
+        return True
+
+    rospy.logwarn("audio_capture: failed to load module-native-protocol-tcp — "
+                  "host applications will not be able to play through this PA server")
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Waveform helpers
 # ---------------------------------------------------------------------------
@@ -196,6 +217,8 @@ def main():
     if not monitor_src:
         rospy.signal_shutdown("Cannot create USB sink in PulseAudio")
         return
+
+    _pa_enable_tcp()
 
     pub_wave = rospy.Publisher("/mouth/audio_wave", Float32MultiArray, queue_size=5)
     pub_level = rospy.Publisher("/audio/level", Float32, queue_size=10)

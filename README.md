@@ -31,9 +31,6 @@ roslaunch sound_mouth_sync sound_mouth_sync.launch
 # С нестандартной эмоцией при старте
 roslaunch sound_mouth_sync sound_mouth_sync.launch default_emotion:=happy
 
-# Захват звука через PulseAudio вместо PipeWire
-roslaunch sound_mouth_sync sound_mouth_sync.launch source:=pulse_monitor
-
 # Отключить авто-переключение на осциллограмму
 roslaunch sound_mouth_sync sound_mouth_sync.launch auto_mode:=false
 ```
@@ -115,6 +112,37 @@ rostopic echo /mouth/current_emotion
 rostopic echo /audio/level
 ```
 
+## Воспроизведение звука
+
+`audio_capture_node` запускает PulseAudio-сервер внутри Docker-контейнера, который эксклюзивно владеет USB-звуковой картой. Все звуки, проходящие через этот сервер, автоматически отображаются на OLED-дисплее как осциллограмма.
+
+### Из Docker-контейнера (рекомендуется)
+
+```bash
+# Простейший тест
+paplay /path/to/sound.wav
+
+# Или через aplay
+aplay /path/to/sound.wav
+```
+
+Любые ROS-ноды внутри контейнера (TTS, sound_play и т.д.) автоматически используют этот PulseAudio.
+
+### С хоста (Raspberry Pi)
+
+```bash
+# Однократная настройка:
+source $(rospack find sound_mouth_sync)/scripts/setup_host_audio.sh
+
+# Проверить подключение:
+source $(rospack find sound_mouth_sync)/scripts/setup_host_audio.sh --check
+
+# Теперь любой звук пойдёт через Docker:
+paplay /usr/share/sounds/alsa/Front_Left.wav
+```
+
+Подробное руководство для разработчиков (TTS, Python, ROS sound_play): [doc/AUDIO_PLAYBACK.md](doc/AUDIO_PLAYBACK.md)
+
 ## Создание пользовательских эмоций
 
 Поместите изображение в `resources/emotions/` с именем, соответствующим эмоции:
@@ -153,17 +181,21 @@ img.save('resources/emotions/myemotion.png')
 **Python (pip3):**
 - `luma.oled` — драйвер OLED SSD1306
 - `Pillow` — обработка изображений
+- `numpy` — обработка аудиосигнала
 - `PyYAML` — чтение конфига (обычно уже установлен)
 
-**Системные:**
-- `pipewire` + `pipewire-pulse` — захват звука с выхода (по умолчанию)
-- или `pulseaudio-utils` — для режима `pulse_monitor`
-- или `alsa-utils` — для режима `alsa`
+**Системные (внутри Docker-контейнера):**
+- `pulseaudio` — аудио-сервер
+- `pulseaudio-utils` — `pactl`, `paplay`, `parec`
+- `alsa-utils` — `aplay`, `arecord`
 - I2C включён (`sudo raspi-config` → Interfaces → I2C)
 
+**На хосте (для воспроизведения звука с Raspberry Pi):**
+- `pulseaudio-utils` — `pactl`, `paplay`
+
 ```bash
-pip3 install luma.oled Pillow
-sudo apt install pipewire pipewire-pulse alsa-utils
+pip3 install luma.oled Pillow numpy
+sudo apt install pulseaudio pulseaudio-utils alsa-utils
 ```
 
 ## Параметры (rosparam / launch args)
@@ -173,10 +205,7 @@ sudo apt install pipewire pipewire-pulse alsa-utils
 | `default_emotion` | `neutral` | Эмоция при запуске |
 | `auto_mode` | `true` | Авто-переключение на осциллограмму при звуке |
 | `silence_return_sec` | `3.0` | Секунд тишины до возврата к эмоции |
-| `source` | `pipewire_monitor` | Источник захвата: `pipewire_monitor`, `pulse_monitor`, `alsa` |
-| `pulse_source` | `""` (авто) | Имя Pulse-источника |
-| `device` | `""` (авто) | ALSA-устройство (авто-определение USB-карты если пусто) |
-| `rate` | `16000` | Частота дискретизации (Гц) |
+| `rate` | `48000` | Частота дискретизации (Гц), должна совпадать с USB-картой |
 | `chunk_size` | `1024` | Сэмплов на один фрагмент |
 
 ## Устранение неполадок
@@ -205,26 +234,35 @@ $(rospack find sound_mouth_sync)/scripts/audio_diag.sh --test
 ```
 
 Типичные причины:
-- PipeWire daemon не запущен (нода попытается запустить автоматически)
-- Нет session manager (pipewire-media-session / wireplumber)
+- PulseAudio не запущен внутри контейнера (нода запускает автоматически)
 - USB-карта не является default sink в PulseAudio
-- Переменная `PIPEWIRE_CONFIG_FILE` указывает на несовместимый конфиг
+- Звук воспроизводится на хосте без `PULSE_SERVER` — не попадает в Docker
 
 Ручная проверка:
 
 ```bash
-# Запущены ли все компоненты PipeWire?
-pgrep -a pipewire
-
-# PulseAudio sinks (должен быть USB Audio)
+# PulseAudio sinks (должен быть usb_output)
 pactl list sinks short
 
-# Monitor-источники (нужен .monitor для захвата)
+# Monitor-источники (должен быть usb_output.monitor)
 pactl list sources short
+
+# TCP-модуль загружен?
+pactl list modules short | grep tcp
 
 # Тест: проиграть звук и послушать уровень
 rostopic echo /audio/level
 ```
+
+### Нет звука с хоста (VLC, aplay и т.д.)
+
+Хост должен направлять звук в PulseAudio контейнера:
+
+```bash
+source $(rospack find sound_mouth_sync)/scripts/setup_host_audio.sh --check
+```
+
+См. подробности в [doc/AUDIO_PLAYBACK.md](doc/AUDIO_PLAYBACK.md#воспроизведение-с-хоста-raspberry-pi).
 
 ### OLED-дисплей показывает перевёрнутое изображение
 
