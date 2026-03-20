@@ -101,6 +101,15 @@ def _pa_start():
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(0.5)
 
+    # Remove client.conf temporarily — it may prevent daemon from starting
+    _client_conf = "/etc/pulse/client.conf"
+    _client_bak = _client_conf + ".bak"
+    try:
+        if os.path.exists(_client_conf):
+            os.rename(_client_conf, _client_bak)
+    except OSError:
+        pass
+
     env = _pa_env()
     try:
         subprocess.Popen(
@@ -258,7 +267,7 @@ def main():
     def _start_parec():
         env = _pa_env()
         return subprocess.Popen(
-            ["parec", "-r", "-d", monitor_src, "--raw",
+            ["parec", "-d", monitor_src, "--raw",
              "--format=s16le", "--rate=%d" % rate, "--channels=1"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
         )

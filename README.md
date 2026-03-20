@@ -143,6 +143,22 @@ paplay /usr/share/sounds/alsa/Front_Left.wav
 
 Подробное руководство для разработчиков (TTS, Python, ROS sound_play): [doc/AUDIO_PLAYBACK.md](doc/AUDIO_PLAYBACK.md)
 
+### Регулировка громкости
+
+```bash
+# Установить громкость (0–100%):
+pactl set-sink-volume usb_output 80%
+
+# Увеличить / уменьшить:
+pactl set-sink-volume usb_output +10%
+pactl set-sink-volume usb_output -10%
+
+# Текущая громкость:
+pactl get-sink-volume usb_output
+```
+
+Подробнее (Python, ROS, хост): [doc/AUDIO_PLAYBACK.md](doc/AUDIO_PLAYBACK.md#регулировка-громкости)
+
 ## Создание пользовательских эмоций
 
 Поместите изображение в `resources/emotions/` с именем, соответствующим эмоции:

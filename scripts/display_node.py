@@ -188,6 +188,8 @@ def main():
     # True = emotion mode, False = oscillogram mode
     emotion_mode = [True]
     last_audio_time = [0.0]
+    last_render_time = [0.0]
+    _MIN_RENDER_INTERVAL = 0.045  # ~22 FPS max, prevents I2C bus saturation
 
     mode_pub = rospy.Publisher("/mouth/current_mode", String, queue_size=1, latch=True)
     emotion_pub = rospy.Publisher("/mouth/current_emotion", String, queue_size=1, latch=True)
@@ -263,18 +265,22 @@ def main():
             total = sum(v * v for v in values)
             rms = (total / n) ** 0.5
 
+        now = time.time()
+
         if rms >= _SILENCE_THRESHOLD:
-            last_audio_time[0] = time.time()
+            last_audio_time[0] = now
             if auto_mode and emotion_mode[0]:
                 emotion_mode[0] = False
                 mode_pub.publish(String(data="oscillogram"))
 
         if not emotion_mode[0]:
-            _show_oscillogram(values)
+            if (now - last_render_time[0]) >= _MIN_RENDER_INTERVAL:
+                _show_oscillogram(values)
+                last_render_time[0] = now
 
     rospy.Subscriber("/mouth/mode", String, on_mode, queue_size=1)
     rospy.Subscriber("/mouth/emotion", String, on_emotion, queue_size=1)
-    rospy.Subscriber("/mouth/audio_wave", Float32MultiArray, on_audio_wave, queue_size=5)
+    rospy.Subscriber("/mouth/audio_wave", Float32MultiArray, on_audio_wave, queue_size=1)
 
     # Timer for auto-return to emotion mode after silence
     def _auto_return_tick(_event):
@@ -289,7 +295,7 @@ def main():
             _show_emotion(current_emotion[0])
 
     if auto_mode:
-        rospy.Timer(rospy.Duration(1.0), _auto_return_tick)
+        rospy.Timer(rospy.Duration(0.3), _auto_return_tick)
 
     if device:
         def shutdown_display():

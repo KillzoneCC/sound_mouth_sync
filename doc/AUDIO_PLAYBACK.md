@@ -168,6 +168,74 @@ ports:
   - "4713:4713"
 ```
 
+## Регулировка громкости
+
+### Из командной строки (pactl)
+
+```bash
+# Текущая громкость:
+pactl get-sink-volume usb_output
+
+# Установить громкость (0–100%):
+pactl set-sink-volume usb_output 80%
+
+# Увеличить на 10%:
+pactl set-sink-volume usb_output +10%
+
+# Уменьшить на 10%:
+pactl set-sink-volume usb_output -10%
+
+# Отключить/включить звук (mute/unmute):
+pactl set-sink-mute usb_output toggle
+```
+
+### Из Python
+
+```python
+import subprocess
+
+def set_volume(percent):
+    """Установить громкость USB-карты (0–100)."""
+    subprocess.call(["pactl", "set-sink-volume", "usb_output", "%d%%" % percent])
+
+def change_volume(delta):
+    """Изменить громкость на delta процентов (+/-)."""
+    sign = "+" if delta >= 0 else ""
+    subprocess.call(["pactl", "set-sink-volume", "usb_output", "%s%d%%" % (sign, delta)])
+```
+
+### Из ROS-ноды
+
+```python
+import subprocess, rospy
+from std_msgs.msg import Int32
+
+def volume_callback(msg):
+    subprocess.call(["pactl", "set-sink-volume", "usb_output", "%d%%" % msg.data])
+
+rospy.Subscriber("/audio/volume", Int32, volume_callback, queue_size=1)
+```
+
+### Громкость с хоста
+
+При подключении через `PULSE_SERVER=tcp:127.0.0.1:4713`:
+
+```bash
+PULSE_SERVER=tcp:127.0.0.1:4713 pactl set-sink-volume usb_output 70%
+```
+
+### amixer (ALSA, напрямую)
+
+```bash
+# Список регуляторов:
+amixer -c 2 scontrols
+
+# Установить громкость (если есть регулятор Speaker или PCM):
+amixer -c 2 set Speaker 80%
+```
+
+> **Примечание**: не все USB-карты поддерживают аппаратную регулировку громкости через ALSA. В этом случае используйте `pactl` (программная регулировка PulseAudio).
+
 ## Как работает осциллограмма
 
 1. Любое приложение воспроизводит звук → PulseAudio → `usb_output` sink
