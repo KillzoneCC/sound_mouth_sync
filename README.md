@@ -5,22 +5,53 @@ ROS-пакет для управления OLED-дисплеем SSD1306 128x64 
 1. **emotion** — статичное выражение рта (happy, sad, neutral, ...) или пользовательские PNG-изображения
 2. **oscillogram** — визуализация звука в реальном времени (осциллограмма всех звуков, воспроизводимых системой)
 
-## Архитектура
+## Схема работы (как “ходит” сигнал)
 
-```
-┌───────────────────────┐       /mouth/audio_wave        ┌──────────────────────┐
-│  audio_capture_node   │──────(Float32MultiArray)──────▶│   display_node       │
-│  (захват звука)       │                                │   (OLED 0x3D)        │
-│                       │──── /audio/level (Float32)     │                      │
-└───────────────────────┘                                │  /mouth/mode ◀──(in) │
-                                                         │  /mouth/emotion◀(in) │
-                                                         │                      │
-                                                         │  /mouth/current_mode │
-                                                         │  /mouth/current_emot.│
-                                                         └──────────────────────┘
+Дисплей управляется двумя ROS-нодаc: `audio_capture_node` (захват и преобразование звука в осциллограмму) и `display_node` (отрисовка эмоций или волны на OLED).
+
+```mermaid
+graph LR
+    subgraph sms[sound_mouth_sync package]
+        ACN[audio_capture_node]
+        DN[display_node]
+    end
+
+    HostApps["Host apps (VLC, aplay)<br/>PULSE_SERVER=tcp:127.0.0.1:4713"]
+    OLED["OLED SSD1306 128x64<br/>I2C 0x3D"]
+    USB["USB Sound Card"]
+    PA["PulseAudio Server inside container<br/>(usb_output sink + TCP:4713)"]
+
+    HostApps -->|"TCP :4713"| PA
+    PA -->|"ALSA"| USB
+    PA -->|"usb_output.monitor"| ACN
+    ACN -->|"/mouth/audio_wave<br/>Float32MultiArray (128 pts, -1..1)"| DN
+    ACN -->|"/audio/level<br/>Float32 (0..1)"| ext["Other ROS nodes (optional)"]
+    ext -->|"/mouth/mode<br/>String"| DN
+    ext -->|"/mouth/emotion<br/>String"| DN
+    DN -->|"I2C"| OLED
+    DN -->|"/mouth/current_mode"| ext
+    DN -->|"/mouth/current_emotion"| ext
 ```
 
-Подробная архитектура: [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md)
+### Режимы отображения на OLED
+
+`display_node` может работать в двух режимах:
+
+1) `emotion` — рисует выбранную эмоцию (например `happy`/`sad`)  
+2) `oscillogram` — рисует осциллограмму по данным `/mouth/audio_wave`
+
+Автопереключение задаётся параметром `auto_mode`:
+
+```mermaid
+stateDiagram-v2
+  [*] --> Emotion: startup (default_emotion)
+  Emotion --> Oscillogram: auto_mode=true + RMS >= 0.02
+  Oscillogram --> Emotion: auto_mode=true + silence (RMS < 0.02) >= silence_return_sec
+  Emotion --> Emotion: manual /mouth/mode=emotion
+  Oscillogram --> Oscillogram: manual /mouth/mode=oscillogram
+```
+
+Подробная архитектура (с более полными диаграммами): [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md)
 
 ## Быстрый старт
 
@@ -34,6 +65,76 @@ roslaunch sound_mouth_sync sound_mouth_sync.launch default_emotion:=happy
 # Отключить авто-переключение на осциллограмму
 roslaunch sound_mouth_sync sound_mouth_sync.launch auto_mode:=false
 ```
+
+## Пошаговая инструкция для новичка
+
+Ниже — “минимальный путь”, чтобы убедиться, что OLED реагирует на ваши команды и на звук.
+
+### 1) Подготовка (разово)
+1. Включите I2C на Raspberry Pi (чтобы OLED SSD1306 по адресу `0x3D` мог работать).
+2. Убедитесь, что USB-звуковая карта определяется: выполните `aplay -l` (должна быть запись про USB Audio Device).
+3. Установите зависимости (Python + системные пакеты). Подробно: раздел `## Зависимости` ниже.
+
+### 2) Поднимите ROS и запустите пакет
+1. В терминале ROS подгрузите окружение (пример для Noetic):
+   ```bash
+   source /opt/ros/noetic/setup.bash
+   source ~/ros_ws/devel/setup.bash
+   ```
+2. Запустите пакет:
+   ```bash
+   roslaunch sound_mouth_sync sound_mouth_sync.launch
+   ```
+3. Проверьте, что ноды стартовали:
+   ```bash
+   rosnode list | grep mouth_
+   ```
+
+### 3) Проверьте топики (что ноды “видят”)
+1. Посмотрите, что появились основные топики:
+   ```bash
+   rostopic list | grep -E "^/mouth/|^/audio/level$"
+   ```
+2. Посмотрите уровень громкости (должен меняться при воспроизведении звука):
+   ```bash
+   rostopic echo /audio/level
+   ```
+
+### 4) Добейтесь осциллограммы по звуку
+Осциллограмма появляется, когда звук проходит через PulseAudio, который поднимает `audio_capture_node` внутри контейнера.
+
+Вариант A (звук внутри контейнера, рекомендуется)
+```bash
+paplay /path/to/sound.wav
+```
+
+Вариант B (звук на хосте Raspberry Pi: VLC/aplay)
+1. Настройте маршрутизацию звука на PulseAudio контейнера:
+   ```bash
+   source $(rospack find sound_mouth_sync)/scripts/setup_host_audio.sh --check
+   ```
+2. Сделайте тест-проигрывание:
+   ```bash
+   paplay /usr/share/sounds/alsa/Front_Left.wav
+   ```
+
+### 5) Управляйте эмоциями вручную
+1. Переключить режим (вручную):
+   ```bash
+   rostopic pub -1 /mouth/mode std_msgs/String "data: 'emotion'"
+   rostopic pub -1 /mouth/mode std_msgs/String "data: 'oscillogram'"
+   ```
+2. Поставить эмоцию (пример):
+   ```bash
+   rostopic pub -1 /mouth/emotion std_msgs/String "data: 'happy'"
+   ```
+
+Полный список тем для `/mouth/emotion` и примеры со “случайной” осциллограммой — в разделе `## Топики` ниже.
+
+### 6) Сами добавьте эмоцию (PNG)
+1. Положите изображение в `resources/emotions/` и назовите файл именем эмоции, например `wink.png`.
+2. Требования: 128x64, 1-bit черно-белое.
+3. После добавления — перезапустите ноду.
 
 ## Топики
 
