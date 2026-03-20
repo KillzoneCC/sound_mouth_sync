@@ -96,6 +96,7 @@ def get_display_settings():
         "posture_topic": "/robot/posture",
         "movement_topic": "/robot/is_moving",
         "idle_require_movement_signal": True,
+        "audio_level_topic": "/audio/level",
     })
 
 

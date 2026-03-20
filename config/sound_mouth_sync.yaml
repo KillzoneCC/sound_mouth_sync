@@ -32,6 +32,7 @@ sound_mouth_sync:
     posture_topic: /robot/posture    # std_msgs/String from ainex_peripherals joystick_control
     movement_topic: /robot/is_moving # std_msgs/Bool — True while gait moving
     idle_require_movement_signal: true  # if true, never idle-sleep until at least one /robot/is_moving (no false sleep without joystick)
+    audio_level_topic: /audio/level    # Float32 RMS 0..1 from audio_capture — wakes oscillogram if wave peaks are too low
 
   audio_capture:
     rate: 48000                      # sample rate Hz (48000 = native USB card rate)

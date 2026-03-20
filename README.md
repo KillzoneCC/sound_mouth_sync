@@ -126,6 +126,24 @@ rostopic pub -1 /mouth/audio_wave std_msgs/Float32MultiArray \
 data: [$(python3 -c "print(','.join(['0.0']*128))")]"
 ```
 
+### Режим сна → осциллограмма → снова рот
+
+При `auto_mode: true` дисплей слушает и **`/mouth/audio_wave`**, и **`/audio/level`** (пороги в `scripts/mouth_audio_gates.py`). Если в сне осциллограмма не появляется, проверьте, что звук идёт в тот же PulseAudio, что и `audio_capture_node`, и что `rostopic hz /audio/level` не нулевой во время воспроизведения.
+
+```bash
+# Имитация сильного звука без файла (должен включить осциллограмму даже из idle-sleep)
+rostopic pub -r 20 /mouth/audio_wave std_msgs/Float32MultiArray \
+  "layout:
+  dim: []
+  data_offset: 0
+data: [$(python3 -c "import math; print(','.join(str(round(0.5*math.sin(2*math.pi*i/16),3)) for i in range(128)))")]"
+
+# Или только уровень (как при тихом файле)
+rostopic pub -r 20 /audio/level std_msgs/Float32 "data: 0.05"
+```
+
+После остановки публикации через `silence_return_sec` снова покажется эмоция (и при длительной тишине — сон по `idle_sleep_sec`).
+
 ### Проверка текущего состояния
 
 ```bash

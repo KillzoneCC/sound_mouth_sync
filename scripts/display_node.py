@@ -11,6 +11,7 @@ Subscriptions:
   /mouth/mode        (String)            "emotion" | "oscillogram"
   /mouth/emotion     (String)            emotion name
   /mouth/audio_wave  (Float32MultiArray) 128 values in -1..1
+  /audio/level       (Float32)           chunk RMS 0..1 (audio_capture) — extra trigger for oscillogram
   /robot/posture     (String)            stand | fall_* (from joystick_control)
   /robot/is_moving   (Bool)              gait moving (from joystick_control)
 
@@ -29,6 +30,7 @@ Parameters:
   ~posture_topic           remapped /robot/posture
   ~movement_topic          remapped /robot/is_moving
   ~idle_require_movement_signal  require /robot/is_moving before idle sleep (default: true)
+  ~audio_level_topic             subscribe for /audio/level (default from YAML)
   ~i2c_port                I2C port number (default: 1)
   ~i2c_address             I2C address (default: 0x3D = 61)
   ~width                   display width  (default: 128)
@@ -44,16 +46,21 @@ import sys
 import time
 
 import rospy
-from std_msgs.msg import String, Float32MultiArray, Bool
+from std_msgs.msg import String, Float32MultiArray, Bool, Float32
 
 try:
     import rospkg
     _pkg_path = rospkg.RosPack().get_path("sound_mouth_sync")
     sys.path.insert(0, os.path.join(_pkg_path, "scripts"))
 except Exception:
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    pass
+# Always include this file's directory (devel/install: deps next to the node script).
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
 
 import sms_config
+import mouth_audio_gates as _mouth_audio_gates
 
 try:
     from luma.core.interface.serial import i2c
@@ -73,7 +80,7 @@ VALID_EMOTIONS = (
     "disgusted", "tired",
 )
 
-_SILENCE_THRESHOLD = 0.02
+# Waveform + /audio/level thresholds live in mouth_audio_gates.py (imported for tests).
 
 _FALL_POSTURES = frozenset(
     ("fall_forward", "fall_backward", "fall_left", "fall_right"),
@@ -358,8 +365,8 @@ def main():
     last_render_time = [0.0]
     _MIN_RENDER_INTERVAL = 0.045  # ~22 FPS max, prevents I2C bus saturation
 
-    fallen = [False]
     idle_sleep_active = [False]
+    # Single source of truth for fall detection (no separate flag — avoids stale "fallen").
     posture_state = ["stand"]
     movement_signal_received = [False]
     is_moving = [False]
@@ -381,6 +388,12 @@ def main():
     else:
         rospy.logwarn("display_node: luma.oled / Pillow not installed — display disabled")
 
+    def _norm_posture_str(raw):
+        return (raw or "stand").strip().lower() or "stand"
+
+    def _robot_is_fallen():
+        return _norm_posture_str(posture_state[0]) in _FALL_POSTURES
+
     def _compose_emotion_frame(emo):
         """Build 1-bit image for emotion (custom PNG > fall angry art > sleepy anim > builtin)."""
         if not Image:
@@ -389,16 +402,16 @@ def main():
         cached = custom_emotion_cache.get(emo)
         if cached is not None:
             return cached
-        if fallen[0] and emo == fall_emotion and emo == "angry":
+        if _robot_is_fallen() and emo == fall_emotion and emo == "angry":
             return _draw_emotion_angry_fall(W, H)
-        if fallen[0] and emo == fall_emotion:
+        if _robot_is_fallen() and emo == fall_emotion:
             return _draw_emotion(emo, W, H)
         if emo == "sleepy":
             return _draw_sleepy_animated(W, H, sleepy_state)
         return _draw_emotion(emo, W, H)
 
     def _should_animate_sleepy():
-        if not emotion_mode[0] or fallen[0] or device is None:
+        if not emotion_mode[0] or _robot_is_fallen() or device is None:
             return False
         if custom_emotion_cache.get("sleepy"):
             return False
@@ -433,7 +446,7 @@ def main():
             rospy.logdebug("display_node oscillogram render: %s", e)
 
     def _effective_emotion():
-        if fallen[0]:
+        if _robot_is_fallen():
             return fall_emotion
         if idle_sleep_active[0] and emotion_mode[0]:
             return idle_sleep_emotion
@@ -459,28 +472,45 @@ def main():
             idle_sleep_active[0] = False
             _refresh_emotion_face()
 
-    def _apply_posture():
-        p = (posture_state[0] or "stand").strip().lower() or "stand"
-        now_fallen = p in _FALL_POSTURES
-        if now_fallen:
-            if not fallen[0]:
-                fallen[0] = True
-                idle_sleep_active[0] = False
-                if not emotion_mode[0]:
-                    emotion_mode[0] = True
-                    mode_pub.publish(String(data="emotion"))
-                _refresh_emotion_face()
-                rospy.logwarn("display_node: robot fallen (%s) — showing '%s'", p, fall_emotion)
-        else:
-            if fallen[0]:
-                fallen[0] = False
-                idle_sleep_active[0] = False
-                rospy.loginfo("display_node: robot upright — emotion '%s'", user_emotion[0])
-                _refresh_emotion_face()
+    def _on_audible_detected(now, wave_values):
+        """
+        Shared path: sound from /mouth/audio_wave and/or /audio/level.
+        wave_values: list of floats or None (level-only: draw flat line until next wave).
+        """
+        was_idle_sleep_overlay = idle_sleep_active[0]
+        last_audio_time[0] = now
+        last_activity_time[0] = now
+        if idle_sleep_active[0]:
+            idle_sleep_active[0] = False
+        if auto_mode and emotion_mode[0]:
+            emotion_mode[0] = False
+            mode_pub.publish(String(data="oscillogram"))
+            if wave_values is not None:
+                _show_oscillogram(wave_values)
+            else:
+                _show_oscillogram([0.0] * W)
+            last_render_time[0] = now
+        elif was_idle_sleep_overlay and emotion_mode[0]:
+            _refresh_emotion_face()
 
     def on_posture(msg):
-        posture_state[0] = (msg.data or "stand").strip().lower() or "stand"
-        _apply_posture()
+        prev = _norm_posture_str(posture_state[0])
+        new = _norm_posture_str(msg.data)
+        posture_state[0] = new
+        prev_fallen = prev in _FALL_POSTURES
+        new_fallen = new in _FALL_POSTURES
+        if new_fallen and not prev_fallen:
+            idle_sleep_active[0] = False
+            if not emotion_mode[0]:
+                emotion_mode[0] = True
+                mode_pub.publish(String(data="emotion"))
+            _refresh_emotion_face()
+            rospy.logwarn("display_node: robot fallen (%s) — showing '%s'", new, fall_emotion)
+        elif not new_fallen and prev_fallen:
+            idle_sleep_active[0] = False
+            _bump_activity_timer()
+            rospy.loginfo("display_node: robot upright — emotion '%s'", user_emotion[0])
+            _refresh_emotion_face()
 
     def on_moving(msg):
         movement_signal_received[0] = True
@@ -489,7 +519,7 @@ def main():
             _bump_activity_timer()
 
     def on_idle_tick(_event):
-        if rospy.is_shutdown() or fallen[0]:
+        if rospy.is_shutdown() or _robot_is_fallen():
             return
         if not idle_sleep_enabled:
             if idle_sleep_active[0]:
@@ -518,7 +548,7 @@ def main():
     def on_mode(msg):
         raw = (msg.data or "").strip().lower()
         if raw == "oscillogram":
-            if fallen[0]:
+            if _robot_is_fallen():
                 rospy.logdebug_throttle(5.0, "display_node: oscillogram ignored while robot fallen")
                 return
             emotion_mode[0] = False
@@ -540,46 +570,58 @@ def main():
             _refresh_emotion_face()
 
     def on_audio_wave(msg):
-        if fallen[0]:
+        if _robot_is_fallen():
             return
         if not msg.data:
             return
         values = list(msg.data)
-
-        rms = 0.0
-        n = len(values)
-        if n > 0:
-            total = sum(v * v for v in values)
-            rms = (total / n) ** 0.5
 
         now = time.time()
 
         if not emotion_mode[0]:
             last_activity_time[0] = now
 
-        if rms >= _SILENCE_THRESHOLD:
-            last_audio_time[0] = now
-            last_activity_time[0] = now
-            if idle_sleep_active[0]:
-                idle_sleep_active[0] = False
-            if auto_mode and emotion_mode[0]:
-                emotion_mode[0] = False
-                mode_pub.publish(String(data="oscillogram"))
+        audible = _mouth_audio_gates.waveform_is_audible(values)
+
+        if audible:
+            _on_audible_detected(now, values)
 
         if not emotion_mode[0]:
             if (now - last_render_time[0]) >= _MIN_RENDER_INTERVAL:
                 _show_oscillogram(values)
                 last_render_time[0] = now
 
+    audio_level_topic = rospy.get_param(
+        "~audio_level_topic",
+        display_cfg.get("audio_level_topic", "/audio/level"),
+    )
+
+    def on_audio_level(msg):
+        """Same energy scale as audio_capture_node (RMS / full-scale); catches quiet files."""
+        if _robot_is_fallen():
+            return
+        try:
+            level = abs(float(msg.data))
+        except (TypeError, ValueError):
+            return
+        if level < _mouth_audio_gates.AUDIO_LEVEL_THRESHOLD:
+            return
+        now = time.time()
+        if not emotion_mode[0]:
+            last_activity_time[0] = now
+        _on_audible_detected(now, None)
+
     rospy.Subscriber("/mouth/mode", String, on_mode, queue_size=1)
     rospy.Subscriber("/mouth/emotion", String, on_emotion, queue_size=1)
     rospy.Subscriber("/mouth/audio_wave", Float32MultiArray, on_audio_wave, queue_size=1)
+    rospy.Subscriber(audio_level_topic, Float32, on_audio_level, queue_size=1)
+    rospy.loginfo("display_node: also subscribing %s for sound (oscillogram wake)", audio_level_topic)
     rospy.Subscriber(posture_topic, String, on_posture, queue_size=1)
     rospy.Subscriber(movement_topic, Bool, on_moving, queue_size=1)
 
     # Timer for auto-return to emotion mode after silence
     def _auto_return_tick(_event):
-        if rospy.is_shutdown() or fallen[0]:
+        if rospy.is_shutdown() or _robot_is_fallen():
             return
         if not auto_mode or emotion_mode[0]:
             return
