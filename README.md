@@ -33,7 +33,32 @@ roslaunch sound_mouth_sync sound_mouth_sync.launch default_emotion:=happy
 
 # Отключить авто-переключение на осциллограмму
 roslaunch sound_mouth_sync sound_mouth_sync.launch auto_mode:=false
+
+# Через 2 минуты бездействия вместо 60 с — «спящая» эмоция
+roslaunch sound_mouth_sync sound_mouth_sync.launch idle_sleep_sec:=120
+
+# Только тишина как критерий сна (без ожидания /robot/is_moving) — осторожно, см. ниже
+roslaunch sound_mouth_sync sound_mouth_sync.launch idle_require_movement_signal:=false
 ```
+
+## Спящий режим и эмоция при падении
+
+`display_node` подписывается на состояние тела от `joystick_control`:
+
+- **Падение:** при `/robot/posture` = `fall_forward`, `fall_backward`, `fall_left`, `fall_right` на OLED показывается эмоция «злость» (`fall_emotion`, по умолчанию `angry`), осциллограмма отключается до возврата `stand`. Рисуется «злой» рот с зубами и царапиной; если положить `resources/emotions/angry.png` (или `.bmp`/`.gif`), будет показана эта картинка вместо векторной отрисовки.
+- **Долгое бездействие:** если нет **речи** (нет слышимого уровня на `/mouth/audio_wave` и не активен режим осциллограммы) и нет **ходьбы** (`/robot/is_moving` = false) в течение `idle_sleep_sec` (по умолчанию 60 с), показывается `idle_sleep_emotion` (по умолчанию `sleepy`). Для `sleepy` без файла `resources/emotions/sleepy.*` используется анимация «дыхание + Zzz»; свой `sleepy.png` отключает анимацию и показывает статичную картинку.
+
+**Настройка времени и поведения**
+
+| Где | Параметр |
+|-----|----------|
+| `config/sound_mouth_sync.yaml` → `display` | `idle_sleep_sec`, `idle_sleep_enabled`, `idle_sleep_emotion`, `fall_emotion` |
+| Launch | `idle_sleep_sec`, `idle_sleep_enabled`, `idle_require_movement_signal` |
+| Нода | `~idle_sleep_sec`, `~posture_topic`, `~movement_topic`, … |
+
+По умолчанию `idle_require_movement_signal:=true`: пока ни разу не пришло сообщение на `/robot/is_moving` (например, нет `joystick_control`), переход в спящий режим **не выполняется** — чтобы не включать «сон» ошибочно. Для отладки только по тишине задайте `idle_require_movement_signal:=false`.
+
+**VR / teleop без джойстика:** если поход идёт через другой пакет и **не** публикуется `/robot/is_moving`, дисплей может считать робота стоящим. Тогда либо публикуйте `Bool` на тот же топик из своего узла, либо используйте `idle_require_movement_signal:=false` и учитывайте только тишину. Альтернатива: в YAML задать `movement_topic: /walking/is_walking` (топик из `ainex_controller`), если он есть в вашем bringup.
 
 ## Топики
 
@@ -44,6 +69,8 @@ roslaunch sound_mouth_sync sound_mouth_sync.launch auto_mode:=false
 | `/mouth/mode` | `std_msgs/String` | Режим: `"emotion"` или `"oscillogram"` |
 | `/mouth/emotion` | `std_msgs/String` | Эмоция: `neutral`, `happy`, `sad`, `angry`, `surprised`, `excited`, `sleepy`, `love`, `confused`, `scared`, `bored`, `calm`, `disgusted`, `tired` |
 | `/mouth/audio_wave` | `std_msgs/Float32MultiArray` | 128 значений от -1.0 до 1.0 для осциллограммы |
+| `/robot/posture` | `std_msgs/String` | `stand` или `fall_*` — публикует `joystick_control` (`ainex_peripherals`) |
+| `/robot/is_moving` | `std_msgs/Bool` | `true`, пока робот идёт по джойстику — тот же узел |
 
 ### Выходные (публикация)
 
@@ -221,6 +248,11 @@ sudo apt install pulseaudio pulseaudio-utils alsa-utils
 | `default_emotion` | `neutral` | Эмоция при запуске |
 | `auto_mode` | `true` | Авто-переключение на осциллограмму при звуке |
 | `silence_return_sec` | `3.0` | Секунд тишины до возврата к эмоции |
+| `idle_sleep_enabled` | `true` | Включить «спящую» эмоцию после бездействия |
+| `idle_sleep_sec` | `60.0` | Секунд без речи и без ходьбы до `idle_sleep_emotion` |
+| `idle_require_movement_signal` | `true` | Не уходить в sleep, пока не было `/robot/is_moving` |
+| `idle_sleep_emotion` | `sleepy` | Эмоция простоя (YAML `display`) |
+| `fall_emotion` | `angry` | Эмоция при падении (YAML `display`) |
 | `rate` | `48000` | Частота дискретизации (Гц), должна совпадать с USB-картой |
 | `chunk_size` | `1024` | Сэмплов на один фрагмент |
 

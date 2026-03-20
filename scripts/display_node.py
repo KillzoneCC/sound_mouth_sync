@@ -11,6 +11,8 @@ Subscriptions:
   /mouth/mode        (String)            "emotion" | "oscillogram"
   /mouth/emotion     (String)            emotion name
   /mouth/audio_wave  (Float32MultiArray) 128 values in -1..1
+  /robot/posture     (String)            stand | fall_* (from joystick_control)
+  /robot/is_moving   (Bool)              gait moving (from joystick_control)
 
 Publications:
   /mouth/current_mode    (String, latch)
@@ -20,6 +22,13 @@ Parameters:
   ~default_emotion         initial emotion (default: neutral)
   ~auto_mode               auto-switch to oscillogram on sound, back on silence (default: true)
   ~silence_return_sec      seconds of silence before returning to emotion mode (default: 3.0)
+  ~idle_sleep_enabled     enable sleepy face after idle (default: true)
+  ~idle_sleep_sec         idle timeout seconds (default: 60)
+  ~idle_sleep_emotion     emotion name for idle (default: sleepy)
+  ~fall_emotion           emotion when fallen (default: angry)
+  ~posture_topic           remapped /robot/posture
+  ~movement_topic          remapped /robot/is_moving
+  ~idle_require_movement_signal  require /robot/is_moving before idle sleep (default: true)
   ~i2c_port                I2C port number (default: 1)
   ~i2c_address             I2C address (default: 0x3D = 61)
   ~width                   display width  (default: 128)
@@ -30,11 +39,12 @@ from __future__ import annotations
 import atexit
 import math
 import os
+import random
 import sys
 import time
 
 import rospy
-from std_msgs.msg import String, Float32MultiArray
+from std_msgs.msg import String, Float32MultiArray, Bool
 
 try:
     import rospkg
@@ -48,7 +58,7 @@ import sms_config
 try:
     from luma.core.interface.serial import i2c
     from luma.oled.device import ssd1306
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageFont
     _LUMA_AVAILABLE = True
 except ImportError:
     _LUMA_AVAILABLE = False
@@ -64,6 +74,140 @@ VALID_EMOTIONS = (
 )
 
 _SILENCE_THRESHOLD = 0.02
+
+_FALL_POSTURES = frozenset(
+    ("fall_forward", "fall_backward", "fall_left", "fall_right"),
+)
+
+# Cached PIL fonts for sleepy Zzz (size -> ImageFont)
+_SLEEPY_FONT_CACHE = {}
+
+
+def _sleepy_font(size_px):
+    """Bitmap font for floating Zzz; DejaVu if present, else default."""
+    size_px = max(6, min(22, int(size_px)))
+    if size_px not in _SLEEPY_FONT_CACHE:
+        try:
+            _SLEEPY_FONT_CACHE[size_px] = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size_px)
+        except OSError:
+            try:
+                _SLEEPY_FONT_CACHE[size_px] = ImageFont.truetype(
+                    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", size_px)
+            except OSError:
+                _SLEEPY_FONT_CACHE[size_px] = ImageFont.load_default()
+    return _SLEEPY_FONT_CACHE[size_px]
+
+
+def _sleepy_anim_reset(state):
+    """Reset Zzz particle state when entering sleepy animation."""
+    state.clear()
+    state["start"] = time.time()
+    state["zzz"] = []
+    state["spawn_elapsed"] = 0.0
+
+
+def _draw_sleepy_animated(width, height, state):
+    """
+    Breathing mouth ellipse + floating Z/z (1-bit OLED, PIL).
+    Call repeatedly (~8 Hz) while showing sleepy.
+    """
+    if "start" not in state:
+        _sleepy_anim_reset(state)
+    img = Image.new("1", (width, height), 0)
+    draw = ImageDraw.Draw(img)
+    cx, cy = width // 2, height // 2
+    mouth_w = 36
+    t0 = state["start"]
+    elapsed = time.time() - t0
+
+    # Spawn Z every ~1.5 s (in animation time)
+    if elapsed - state["spawn_elapsed"] > 1.5:
+        state["zzz"].append({
+            "x": float(cx + 14),
+            "y": float(cy - 10),
+            "size": 12.0,
+            "alpha": 255,
+            "char": random.choice(("Z", "z", "Z")),
+        })
+        state["spawn_elapsed"] = elapsed
+
+    # Update particles
+    alive = []
+    for z in state["zzz"]:
+        z["x"] -= 0.8
+        z["y"] -= 0.4
+        z["size"] *= 0.98
+        z["alpha"] -= 4
+        if z["alpha"] > 0 and z["size"] >= 3.0:
+            alive.append(z)
+    state["zzz"] = alive
+
+    # Breathing mouth (horizontal ellipse)
+    breath = math.sin((time.time() - t0) * 1.2)
+    mouth_h = max(4, int(5 + breath * 5))
+    x0 = cx - mouth_w // 2
+    y0 = cy - mouth_h // 2
+    x1 = cx + mouth_w // 2
+    y1 = cy + mouth_h // 2
+    draw.ellipse((x0, y0, x1, y1), outline=255, width=2)
+
+    # Zzz (skip draw when alpha low — fake fade on 1-bit)
+    for z in state["zzz"]:
+        if z["alpha"] < 40:
+            continue
+        font = _sleepy_font(z["size"])
+        draw.text((int(z["x"]), int(z["y"])), z["char"], fill=255, font=font)
+
+    return img
+
+
+def _draw_emotion_angry_fall(width, height):
+    """
+    Angry mouth for fall state: lips + sharp teeth + scratch marks (1-bit).
+    Coordinates adapted from pygame example to OLED center.
+    """
+    img = Image.new("1", (width, height), 0)
+    draw = ImageDraw.Draw(img)
+    cx, cy = width // 2, height // 2
+    mx, my = cx, cy
+    lw = 3
+
+    # Upper lip
+    draw.line((mx - 20, my - 5, mx + 20, my - 5), fill=255, width=lw)
+    # Lower lip
+    draw.line((mx - 20, my + 10, mx + 20, my + 10), fill=255, width=lw)
+
+    teeth_positions = (-12, -4, 4, 12)
+    for tx in teeth_positions:
+        tooth_x = mx + tx
+        draw.polygon(
+            [
+                (tooth_x - 3, my - 5),
+                (tooth_x + 3, my - 5),
+                (tooth_x, my + 2),
+            ],
+            outline=255, fill=255,
+        )
+        draw.polygon(
+            [
+                (tooth_x - 3, my + 10),
+                (tooth_x + 3, my + 10),
+                (tooth_x, my + 3),
+            ],
+            outline=255, fill=255,
+        )
+
+    scratch_x = mx + 35
+    scratch_y = my
+    for i in range(3):
+        off = i * 3
+        draw.line(
+            (scratch_x, scratch_y - 8 + off, scratch_x + 12, scratch_y + 4 + off),
+            fill=255, width=1,
+        )
+
+    return img
 
 
 def _load_custom_emotion_image(emotion, resources_dir, width, height):
@@ -101,7 +245,11 @@ def _draw_emotion(emotion, width, height):
         draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=255, width=lw)
     elif emotion == "excited":
         draw.arc((cx - r, cy - r, cx + r, cy + r), 0, 180, fill=255, width=lw)
-    elif emotion in ("sleepy", "tired"):
+    elif emotion == "tired":
+        rs = max(4, r // 2)
+        draw.line((cx - rs, cy, cx + rs, cy), fill=255, width=lw)
+    elif emotion == "sleepy":
+        # Fallback static line if animation path not used (tests / no device)
         rs = max(4, r // 2)
         draw.line((cx - rs, cy, cx + rs, cy), fill=255, width=lw)
     elif emotion == "love":
@@ -184,12 +332,39 @@ def main():
                         custom_emotion_cache[name.lower()] = img
                         rospy.loginfo("display_node: loaded custom emotion '%s' from %s", name, fname)
 
-    current_emotion = [default_emotion if default_emotion in VALID_EMOTIONS or default_emotion in custom_emotion_cache else "neutral"]
+    def _norm_emotion(name):
+        raw = (name or "neutral").strip().lower() or "neutral"
+        if raw not in VALID_EMOTIONS and raw not in custom_emotion_cache:
+            return "neutral"
+        return raw
+
+    idle_sleep_enabled = bool(rospy.get_param("~idle_sleep_enabled", display_cfg.get("idle_sleep_enabled", True)))
+    idle_sleep_sec = float(rospy.get_param("~idle_sleep_sec", display_cfg.get("idle_sleep_sec", 60.0)))
+    idle_sleep_emotion = _norm_emotion(rospy.get_param(
+        "~idle_sleep_emotion", display_cfg.get("idle_sleep_emotion", "sleepy")))
+    fall_emotion = _norm_emotion(rospy.get_param("~fall_emotion", display_cfg.get("fall_emotion", "angry")))
+    posture_topic = rospy.get_param("~posture_topic", display_cfg.get("posture_topic", "/robot/posture"))
+    movement_topic = rospy.get_param("~movement_topic", display_cfg.get("movement_topic", "/robot/is_moving"))
+    idle_require_movement_signal = bool(rospy.get_param(
+        "~idle_require_movement_signal",
+        display_cfg.get("idle_require_movement_signal", True),
+    ))
+
+    user_emotion = [_norm_emotion(default_emotion)]
     # True = emotion mode, False = oscillogram mode
     emotion_mode = [True]
     last_audio_time = [0.0]
+    last_activity_time = [time.time()]
     last_render_time = [0.0]
     _MIN_RENDER_INTERVAL = 0.045  # ~22 FPS max, prevents I2C bus saturation
+
+    fallen = [False]
+    idle_sleep_active = [False]
+    posture_state = ["stand"]
+    movement_signal_received = [False]
+    is_moving = [False]
+    sleepy_state = {}
+    last_drawn_effective = [""]
 
     mode_pub = rospy.Publisher("/mouth/current_mode", String, queue_size=1, latch=True)
     emotion_pub = rospy.Publisher("/mouth/current_emotion", String, queue_size=1, latch=True)
@@ -206,16 +381,48 @@ def main():
     else:
         rospy.logwarn("display_node: luma.oled / Pillow not installed — display disabled")
 
+    def _compose_emotion_frame(emo):
+        """Build 1-bit image for emotion (custom PNG > fall angry art > sleepy anim > builtin)."""
+        if not Image:
+            return None
+        emo = (emo or "neutral").strip().lower()
+        cached = custom_emotion_cache.get(emo)
+        if cached is not None:
+            return cached
+        if fallen[0] and emo == fall_emotion and emo == "angry":
+            return _draw_emotion_angry_fall(W, H)
+        if fallen[0] and emo == fall_emotion:
+            return _draw_emotion(emo, W, H)
+        if emo == "sleepy":
+            return _draw_sleepy_animated(W, H, sleepy_state)
+        return _draw_emotion(emo, W, H)
+
+    def _should_animate_sleepy():
+        if not emotion_mode[0] or fallen[0] or device is None:
+            return False
+        if custom_emotion_cache.get("sleepy"):
+            return False
+        return _effective_emotion() == "sleepy"
+
     def _show_emotion(emo):
         if device is None:
             return
         try:
-            img = custom_emotion_cache.get(emo)
-            if img is None:
-                img = _draw_emotion(emo, W, H)
-            device.display(img)
+            img = _compose_emotion_frame(emo)
+            if img is not None:
+                device.display(img)
         except Exception as e:
             rospy.logdebug("display_node emotion render: %s", e)
+
+    def _sleepy_anim_tick(_event):
+        if rospy.is_shutdown() or not _should_animate_sleepy():
+            return
+        try:
+            img = _compose_emotion_frame("sleepy")
+            if img is not None:
+                device.display(img)
+        except Exception:
+            pass
 
     def _show_oscillogram(values):
         if device is None:
@@ -225,15 +432,95 @@ def main():
         except Exception as e:
             rospy.logdebug("display_node oscillogram render: %s", e)
 
+    def _effective_emotion():
+        if fallen[0]:
+            return fall_emotion
+        if idle_sleep_active[0] and emotion_mode[0]:
+            return idle_sleep_emotion
+        return user_emotion[0]
+
+    def _refresh_emotion_face():
+        """Update latched emotion topic and OLED when in emotion mode."""
+        if not emotion_mode[0]:
+            return
+        emo = _effective_emotion()
+        if emo == "sleepy" and last_drawn_effective[0] != "sleepy":
+            if not custom_emotion_cache.get("sleepy"):
+                _sleepy_anim_reset(sleepy_state)
+        last_drawn_effective[0] = emo
+        emotion_pub.publish(String(data=emo))
+        if device:
+            _show_emotion(emo)
+
+    def _bump_activity_timer():
+        """Reset idle-sleep countdown; exit idle-sleep overlay if active."""
+        last_activity_time[0] = time.time()
+        if idle_sleep_active[0]:
+            idle_sleep_active[0] = False
+            _refresh_emotion_face()
+
+    def _apply_posture():
+        p = (posture_state[0] or "stand").strip().lower() or "stand"
+        now_fallen = p in _FALL_POSTURES
+        if now_fallen:
+            if not fallen[0]:
+                fallen[0] = True
+                idle_sleep_active[0] = False
+                if not emotion_mode[0]:
+                    emotion_mode[0] = True
+                    mode_pub.publish(String(data="emotion"))
+                _refresh_emotion_face()
+                rospy.logwarn("display_node: robot fallen (%s) — showing '%s'", p, fall_emotion)
+        else:
+            if fallen[0]:
+                fallen[0] = False
+                idle_sleep_active[0] = False
+                rospy.loginfo("display_node: robot upright — emotion '%s'", user_emotion[0])
+                _refresh_emotion_face()
+
+    def on_posture(msg):
+        posture_state[0] = (msg.data or "stand").strip().lower() or "stand"
+        _apply_posture()
+
+    def on_moving(msg):
+        movement_signal_received[0] = True
+        is_moving[0] = bool(msg.data)
+        if msg.data:
+            _bump_activity_timer()
+
+    def on_idle_tick(_event):
+        if rospy.is_shutdown() or fallen[0]:
+            return
+        if not idle_sleep_enabled:
+            if idle_sleep_active[0]:
+                idle_sleep_active[0] = False
+                _refresh_emotion_face()
+            return
+        if not emotion_mode[0]:
+            return
+        if idle_require_movement_signal and not movement_signal_received[0]:
+            return
+        elapsed_idle = time.time() - last_activity_time[0]
+        if elapsed_idle >= idle_sleep_sec:
+            if not idle_sleep_active[0]:
+                idle_sleep_active[0] = True
+                _refresh_emotion_face()
+        elif idle_sleep_active[0]:
+            idle_sleep_active[0] = False
+            _refresh_emotion_face()
+
     # Initial state
     mode_pub.publish(String(data="emotion"))
-    emotion_pub.publish(String(data=current_emotion[0]))
+    emotion_pub.publish(String(data=user_emotion[0]))
     if device:
-        _show_emotion(current_emotion[0])
+        _show_emotion(user_emotion[0])
 
     def on_mode(msg):
         raw = (msg.data or "").strip().lower()
         if raw == "oscillogram":
+            if fallen[0]:
+                rospy.logdebug_throttle(5.0, "display_node: oscillogram ignored while robot fallen")
+                return
             emotion_mode[0] = False
             mode_pub.publish(String(data="oscillogram"))
             if device:
@@ -242,19 +529,19 @@ def main():
         elif raw == "emotion":
             emotion_mode[0] = True
             mode_pub.publish(String(data="emotion"))
-            _show_emotion(current_emotion[0])
+            _refresh_emotion_face()
             rospy.loginfo("display_node: mode -> emotion")
 
     def on_emotion(msg):
-        raw = (msg.data or "neutral").strip().lower() or "neutral"
-        if raw not in VALID_EMOTIONS and raw not in custom_emotion_cache:
-            raw = "neutral"
-        current_emotion[0] = raw
-        emotion_pub.publish(String(data=raw))
+        raw = _norm_emotion((msg.data or "neutral").strip().lower() or "neutral")
+        user_emotion[0] = raw
+        _bump_activity_timer()
         if emotion_mode[0]:
-            _show_emotion(raw)
+            _refresh_emotion_face()
 
     def on_audio_wave(msg):
+        if fallen[0]:
+            return
         if not msg.data:
             return
         values = list(msg.data)
@@ -267,8 +554,14 @@ def main():
 
         now = time.time()
 
+        if not emotion_mode[0]:
+            last_activity_time[0] = now
+
         if rms >= _SILENCE_THRESHOLD:
             last_audio_time[0] = now
+            last_activity_time[0] = now
+            if idle_sleep_active[0]:
+                idle_sleep_active[0] = False
             if auto_mode and emotion_mode[0]:
                 emotion_mode[0] = False
                 mode_pub.publish(String(data="oscillogram"))
@@ -281,10 +574,12 @@ def main():
     rospy.Subscriber("/mouth/mode", String, on_mode, queue_size=1)
     rospy.Subscriber("/mouth/emotion", String, on_emotion, queue_size=1)
     rospy.Subscriber("/mouth/audio_wave", Float32MultiArray, on_audio_wave, queue_size=1)
+    rospy.Subscriber(posture_topic, String, on_posture, queue_size=1)
+    rospy.Subscriber(movement_topic, Bool, on_moving, queue_size=1)
 
     # Timer for auto-return to emotion mode after silence
     def _auto_return_tick(_event):
-        if rospy.is_shutdown():
+        if rospy.is_shutdown() or fallen[0]:
             return
         if not auto_mode or emotion_mode[0]:
             return
@@ -292,10 +587,13 @@ def main():
         if elapsed >= silence_return_sec:
             emotion_mode[0] = True
             mode_pub.publish(String(data="emotion"))
-            _show_emotion(current_emotion[0])
+            _refresh_emotion_face()
 
     if auto_mode:
         rospy.Timer(rospy.Duration(0.3), _auto_return_tick)
+
+    rospy.Timer(rospy.Duration(0.5), on_idle_tick)
+    rospy.Timer(rospy.Duration(0.12), _sleepy_anim_tick)
 
     if device:
         def shutdown_display():
@@ -308,8 +606,9 @@ def main():
         atexit.register(shutdown_display)
 
     rospy.loginfo(
-        "display_node started: mode=%s, default_emotion=%s, auto_mode=%s",
-        "emotion", current_emotion[0], auto_mode,
+        "display_node started: mode=emotion, user_emotion=%s, auto_mode=%s, "
+        "idle_sleep=%s (%.1fs), fall_emotion=%s",
+        user_emotion[0], auto_mode, idle_sleep_enabled, idle_sleep_sec, fall_emotion,
     )
     rospy.spin()
 

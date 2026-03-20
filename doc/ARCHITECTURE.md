@@ -27,6 +27,9 @@ graph LR
     ACN -->|"/audio/level<br/>Float32"| OtherNodes
     OtherNodes -->|"/mouth/mode<br/>String"| DN
     OtherNodes -->|"/mouth/emotion<br/>String"| DN
+    JC2["joystick_control<br/>ainex_peripherals"]
+    JC2 -->|"/robot/posture<br/>String"| DN
+    JC2 -->|"/robot/is_moving<br/>Bool"| DN
     DN -->|"I2C"| OLED
     DN -->|"/mouth/current_mode"| OtherNodes
     DN -->|"/mouth/current_emotion"| OtherNodes
@@ -65,6 +68,11 @@ stateDiagram-v2
 **Авто-режим (auto_mode):**
 - При обнаружении звука (RMS >= 0.02) — переключение в oscillogram
 - После `silence_return_sec` секунд тишины — возврат к emotion
+
+**Приоритет эмоций (поверх пользовательской):**
+1. Падение — топик `/robot/posture` ∈ `{fall_forward, fall_backward, fall_left, fall_right}`: на экране `fall_emotion` (по умолчанию `angry`), осциллограмма отключена до `stand`. Для `angry` без `resources/emotions/angry.*` — векторная отрисовка (зубы, царапина). Источник: `joystick_control` в пакете `ainex_peripherals` (детектор по IMU).
+2. Обычная работа — эмоция с `/mouth/emotion` и осциллограмма по звуку.
+3. Долгое бездействие — параметр `idle_sleep_sec` (по умолчанию 60 с): нет слышимого звука, нет ходьбы (`/robot/is_moving`), режим эмоций → показ `idle_sleep_emotion` (по умолчанию `sleepy`). Для `sleepy` без `sleepy.*` в `resources/emotions/` — анимация «дыхание + Zzz». См. `idle_require_movement_signal` в конфиге.
 
 ### 2. audio_capture_node (mouth_audio_capture_node)
 
@@ -183,3 +191,5 @@ sound_mouth_sync/
 - Воспроизводить звук через PulseAudio (внутри Docker — автоматически, с хоста — через `PULSE_SERVER=tcp:127.0.0.1:4713`)
 
 Подробное руководство по воспроизведению звука: [AUDIO_PLAYBACK.md](AUDIO_PLAYBACK.md)
+
+Состояние тела для рта: узел `joystick_control` (`ainex_peripherals`) публикует с защёлкой `/robot/posture` и `/robot/is_moving` — см. `control/joystick_controller.py`.

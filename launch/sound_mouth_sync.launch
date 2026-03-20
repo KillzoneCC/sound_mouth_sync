@@ -5,7 +5,7 @@
   Usage:
     roslaunch sound_mouth_sync sound_mouth_sync.launch
     roslaunch sound_mouth_sync sound_mouth_sync.launch default_emotion:=happy
-    roslaunch sound_mouth_sync sound_mouth_sync.launch source:=pulse_monitor
+    roslaunch sound_mouth_sync sound_mouth_sync.launch idle_sleep_sec:=120
     roslaunch sound_mouth_sync sound_mouth_sync.launch auto_mode:=false
 -->
 <launch>
@@ -16,6 +16,9 @@
   <arg name="default_emotion" default="neutral" doc="Emotion shown at startup"/>
   <arg name="auto_mode" default="true" doc="Auto-switch to oscillogram on sound"/>
   <arg name="silence_return_sec" default="3.0" doc="Seconds of silence before returning to emotion"/>
+  <arg name="idle_sleep_enabled" default="true" doc="Enable sleepy face after idle"/>
+  <arg name="idle_sleep_sec" default="60.0" doc="Seconds without motion+speech before idle sleep"/>
+  <arg name="idle_require_movement_signal" default="true" doc="Require /robot/is_moving before allowing idle sleep"/>
 
   <!-- Audio capture args -->
   <arg name="rate" default="48000" doc="Sample rate Hz (48000 = native USB card rate)"/>
@@ -26,6 +29,9 @@
     <param name="default_emotion" value="$(arg default_emotion)"/>
     <param name="auto_mode" value="$(arg auto_mode)"/>
     <param name="silence_return_sec" value="$(arg silence_return_sec)"/>
+    <param name="idle_sleep_enabled" value="$(arg idle_sleep_enabled)"/>
+    <param name="idle_sleep_sec" value="$(arg idle_sleep_sec)"/>
+    <param name="idle_require_movement_signal" value="$(arg idle_require_movement_signal)"/>
   </node>
 
   <!-- Node 2: Audio capture (PulseAudio monitor of USB sink) -->

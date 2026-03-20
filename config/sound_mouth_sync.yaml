@@ -24,6 +24,14 @@ sound_mouth_sync:
     default_emotion: neutral
     auto_mode: true                  # auto-switch oscillogram on sound, back to emotion on silence
     silence_return_sec: 3.0          # seconds of silence before returning to emotion mode
+    # Idle sleep (mouth OLED): after no speech and no walking for idle_sleep_sec
+    idle_sleep_enabled: true
+    idle_sleep_sec: 60.0             # seconds of inactivity before showing idle_sleep_emotion
+    idle_sleep_emotion: sleepy
+    fall_emotion: angry              # shown while /robot/posture is fall_*
+    posture_topic: /robot/posture    # std_msgs/String from ainex_peripherals joystick_control
+    movement_topic: /robot/is_moving # std_msgs/Bool — True while gait moving
+    idle_require_movement_signal: true  # if true, never idle-sleep until at least one /robot/is_moving (no false sleep without joystick)
 
   audio_capture:
     rate: 48000                      # sample rate Hz (48000 = native USB card rate)

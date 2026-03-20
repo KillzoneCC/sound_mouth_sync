@@ -89,6 +89,13 @@ def get_display_settings():
         "default_emotion": "neutral",
         "auto_mode": True,
         "silence_return_sec": 3.0,
+        "idle_sleep_enabled": True,
+        "idle_sleep_sec": 60.0,
+        "idle_sleep_emotion": "sleepy",
+        "fall_emotion": "angry",
+        "posture_topic": "/robot/posture",
+        "movement_topic": "/robot/is_moving",
+        "idle_require_movement_signal": True,
     })
 
 
