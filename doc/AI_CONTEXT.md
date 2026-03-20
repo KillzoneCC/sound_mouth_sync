@@ -31,7 +31,7 @@ oscillograms.
 
 | File | Role | Key Details |
 |------|------|-------------|
-| `scripts/display_node.py` | Node 1: OLED display | Subscribes `/mouth/mode`, `/mouth/emotion`, `/mouth/audio_wave`, `/robot/posture`, `/robot/is_moving`. Publishes `/mouth/current_mode`, `/mouth/current_emotion`. Priority: fallen → `fall_emotion`; idle timeout → `idle_sleep_emotion`; else user emotion + oscillogram. `sleepy` without `sleepy.png`: animated breath + Zzz. Fall `angry` without `angry.png`: vector mouth + scratch. |
+| `scripts/display_node.py` | Node 1: OLED display | Subscribes `/mouth/mode`, `/mouth/emotion`, `/mouth/audio_wave`, `/robot/posture`, `/robot/is_moving`. Publishes `/mouth/current_mode`, `/mouth/current_emotion`. Priority: fallen → `fall_emotion`; idle timeout → `idle_sleep_emotion`; else user emotion + oscillogram. `sleepy` without `sleepy.png`: animated cigarette + smoke. Fall `angry` without `angry.png`: vector mouth + scratch. |
 | `scripts/audio_capture_node.py` | Node 2: audio capture | Starts native PulseAudio, creates ALSA sink for USB card, enables TCP:4713 for host access. Captures via `parec` from `usb_output.monitor`. Publishes `/mouth/audio_wave` (Float32MultiArray, 128 pts) and `/audio/level` (Float32). |
 | `scripts/sms_config.py` | Config module | Loads `config/sound_mouth_sync.yaml` + rosparam overrides. Used by both nodes. |
 | `scripts/usb_audio_reset.sh` | USB audio reset | Resets USB audio device via sysfs `authorized` toggle. Run with sudo after reboot if card not detected. |
@@ -172,7 +172,7 @@ Host:    VLC/aplay → PULSE_SERVER=tcp:127.0.0.1:4713 → (same PulseAudio abov
 - USB sound card may not initialize after reboot. Fix: `sudo scripts/usb_audio_reset.sh`
 - Host applications (VLC, aplay) must set `PULSE_SERVER=tcp:127.0.0.1:4713` to route audio through Docker's PulseAudio. Use `scripts/setup_host_audio.sh` for convenience.
 - The USB card has no functional hardware loopback — PulseAudio monitor is the only way to capture playback.
-- Most emotions are static; `sleepy` (idle, no custom asset) is animated (breath + Zzz). See `ROADMAP.md` for further animation plans.
+- Most emotions are static; `sleepy` (idle, no custom asset) is animated (cigarette + smoke). See `ROADMAP.md` for further animation plans.
 
 ## Change Log
 
@@ -182,4 +182,4 @@ Host:    VLC/aplay → PULSE_SERVER=tcp:127.0.0.1:4713 → (same PulseAudio abov
 | 2026-03-19 | AI Agent | Fix OLED inversion (rotate=2). Rewrite audio capture: proper PipeWire session startup, USB card auto-detect, startup diagnostics, silence detection warning. Add usb_audio_reset.sh, audio_diag.sh, ROADMAP.md. |
 | 2026-03-19 | AI Agent | Rewrite audio capture to native PulseAudio (no PipeWire). Add TCP:4713 for host access, setup_host_audio.sh, AUDIO_PLAYBACK.md developer guide. Update all docs. |
 | 2026-03-20 | AI Agent | Idle sleep + fall face: `joystick_control` publishes `/robot/posture`, `/robot/is_moving`; `display_node` subscribes; YAML + README + docs. |
-| 2026-03-20 | AI Agent | Animated sleepy (breath + Zzz) when no `sleepy.*`; fall angry vector mouth + scratch when no `angry.*`. |
+| 2026-03-20 | AI Agent | Animated sleepy (cigarette + smoke) when no `sleepy.*`; fall angry vector mouth + scratch when no `angry.*`. |

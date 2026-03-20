@@ -43,6 +43,7 @@ import math
 import os
 import random
 import sys
+import threading
 import time
 
 import rospy
@@ -86,12 +87,12 @@ _FALL_POSTURES = frozenset(
     ("fall_forward", "fall_backward", "fall_left", "fall_right"),
 )
 
-# Cached PIL fonts for sleepy Zzz (size -> ImageFont)
+# Cached PIL fonts for legacy sleepy "Zzz" particles (size -> ImageFont)
 _SLEEPY_FONT_CACHE = {}
 
 
 def _sleepy_font(size_px):
-    """Bitmap font for floating Zzz; DejaVu if present, else default."""
+    """Bitmap font for legacy floating "Zzz"; DejaVu if present, else default."""
     size_px = max(6, min(22, int(size_px)))
     if size_px not in _SLEEPY_FONT_CACHE:
         try:
@@ -107,64 +108,128 @@ def _sleepy_font(size_px):
 
 
 def _sleepy_anim_reset(state):
-    """Reset Zzz particle state when entering sleepy animation."""
+    """Reset smoke-puff particle state when entering idle 'sleepy' animation."""
     state.clear()
     state["start"] = time.time()
-    state["zzz"] = []
-    state["spawn_elapsed"] = 0.0
+    state["puffs"] = []
+    state["next_spawn"] = 0.0  # absolute animation time (seconds)
 
 
 def _draw_sleepy_animated(width, height, state):
     """
-    Breathing mouth ellipse + floating Z/z (1-bit OLED, PIL).
-    Call repeatedly (~8 Hz) while showing sleepy.
+    Cigarette + rising smoke puffs (1-bit OLED, PIL).
+    Call repeatedly (~8 Hz) while showing idle "sleepy".
     """
     if "start" not in state:
         _sleepy_anim_reset(state)
+
     img = Image.new("1", (width, height), 0)
     draw = ImageDraw.Draw(img)
-    cx, cy = width // 2, height // 2
-    mouth_w = 36
+
     t0 = state["start"]
     elapsed = time.time() - t0
 
-    # Spawn Z every ~1.5 s (in animation time)
-    if elapsed - state["spawn_elapsed"] > 1.5:
-        state["zzz"].append({
-            "x": float(cx + 14),
-            "y": float(cy - 10),
-            "size": 12.0,
-            "alpha": 255,
-            "char": random.choice(("Z", "z", "Z")),
+    # Scale coordinates for any display size (base design tuned for 128x64).
+    sx = float(width) / 128.0
+    sy = float(height) / 64.0
+    s = min(sx, sy)
+    lw = max(1, int(round(2 * s)))
+
+    def _sxy(x, y):
+        return (int(round(x * sx)), int(round(y * sy)))
+
+    # Tiny "breathing" jiggle for life.
+    jiggle_x = int(round(math.sin(elapsed * 1.1) * 0.6 * sx))
+    jiggle_y = int(round(math.cos(elapsed * 0.9) * 0.4 * sy))
+
+    # Base geometry (from user's draw_smoke()).
+    ember_rect = (16, 46, 28, 56)
+    body1 = (26, 50, 92, 42)
+    body2 = (26, 54, 94, 46)
+    filter_line = (88, 40, 88, 48)
+    smoke1 = [(24, 46), (18, 38), (22, 30), (16, 22), (20, 14), (14, 8), (18, 4)]
+    smoke2 = [(28, 44), (32, 34), (26, 26), (30, 18), (24, 10), (28, 5)]
+
+    # Cigarette + ember glow.
+    ex0, ey0 = _sxy(ember_rect[0], ember_rect[1])
+    ex1, ey1 = _sxy(ember_rect[2], ember_rect[3])
+    draw.ellipse((ex0 + jiggle_x, ey0 + jiggle_y, ex1 + jiggle_x, ey1 + jiggle_y), outline=255, width=lw)
+
+    bx00, by00 = _sxy(body1[0], body1[1])
+    bx01, by01 = _sxy(body1[2], body1[3])
+    bx10, by10 = _sxy(body2[0], body2[1])
+    bx11, by11 = _sxy(body2[2], body2[3])
+    fx0, fy0 = _sxy(filter_line[0], filter_line[1])
+    fx1, fy1 = _sxy(filter_line[2], filter_line[3])
+
+    draw.line((bx00 + jiggle_x, by00 + jiggle_y, bx01 + jiggle_x, by01 + jiggle_y), fill=255, width=lw)
+    draw.line((bx10 + jiggle_x, by10 + jiggle_y, bx11 + jiggle_x, by11 + jiggle_y), fill=255, width=lw)
+    draw.line((fx0 + jiggle_x, fy0 + jiggle_y, fx1 + jiggle_x, fy1 + jiggle_y), fill=255, width=max(1, lw - 1))
+
+    flicker = math.sin(elapsed * 11.0) * 0.5 + 0.5
+    ember_on = flicker > 0.55 or random.random() < 0.08
+    if ember_on:
+        hot_x, hot_y = _sxy(20, 47)
+        draw.ellipse(
+            (hot_x + jiggle_x - 1, hot_y + jiggle_y - 1, hot_x + jiggle_x + 1, hot_y + jiggle_y + 1),
+            fill=255,
+            outline=255,
+        )
+
+    # Spawn smoke puffs at the ember tip.
+    if elapsed >= float(state.get("next_spawn", 0.0)):
+        state["puffs"].append({
+            "born": elapsed,
+            "life": random.uniform(0.85, 1.25),
+            "speed": random.uniform(18.0, 26.0) * sy,   # px/s in Y
+            "drift": random.uniform(-6.0, 6.0) * sx,    # px in X
+            "phase": random.uniform(0.0, math.tau),
+            "wiggle": random.uniform(0.8, 1.6) * s,
         })
-        state["spawn_elapsed"] = elapsed
+        # Keep visual clarity + CPU load reasonable.
+        state["puffs"] = state["puffs"][-6:]
+        state["next_spawn"] = elapsed + random.uniform(0.28, 0.48)
 
-    # Update particles
-    alive = []
-    for z in state["zzz"]:
-        z["x"] -= 0.8
-        z["y"] -= 0.4
-        z["size"] *= 0.98
-        z["alpha"] -= 4
-        if z["alpha"] > 0 and z["size"] >= 3.0:
-            alive.append(z)
-    state["zzz"] = alive
+    # Pre-scale smoke polylines to floats for smoother animation.
+    smoke1_f = [(x * sx, y * sy) for (x, y) in smoke1]
+    smoke2_f = [(x * sx, y * sy) for (x, y) in smoke2]
 
-    # Breathing mouth (horizontal ellipse)
-    breath = math.sin((time.time() - t0) * 1.2)
-    mouth_h = max(4, int(5 + breath * 5))
-    x0 = cx - mouth_w // 2
-    y0 = cy - mouth_h // 2
-    x1 = cx + mouth_w // 2
-    y1 = cy + mouth_h // 2
-    draw.ellipse((x0, y0, x1, y1), outline=255, width=2)
-
-    # Zzz (skip draw when alpha low — fake fade on 1-bit)
-    for z in state["zzz"]:
-        if z["alpha"] < 40:
+    new_puffs = []
+    for puff in state["puffs"]:
+        age = elapsed - puff["born"]
+        if age < 0.0:
+            new_puffs.append(puff)
             continue
-        font = _sleepy_font(z["size"])
-        draw.text((int(z["x"]), int(z["y"])), z["char"], fill=255, font=font)
+        if age > puff["life"]:
+            continue
+
+        dy = -age * puff["speed"]
+        dx = puff["drift"] * math.sin(age * 2.4 + puff["phase"])
+
+        # Shrink line width over time (fake fade on 1-bit).
+        w = max(1, int(round(lw - age * 0.9)))
+        step = 2 if age > (puff["life"] * 0.7) else 1
+
+        pts1 = []
+        for i in range(0, len(smoke1_f), step):
+            x, y = smoke1_f[i]
+            wig = puff["wiggle"] * math.sin(age * 6.0 + puff["phase"] + i * 0.7)
+            py = y + math.cos(age * 5.0 + puff["phase"] + i) * (0.15 * puff["wiggle"])
+            pts1.append((int(round(x + dx + jiggle_x + wig * 0.6)), int(round(py + dy + jiggle_y))))
+        if len(pts1) >= 2:
+            draw.line(pts1, fill=255, width=w)
+
+        pts2 = []
+        for i in range(0, len(smoke2_f), step):
+            x, y = smoke2_f[i]
+            wig = puff["wiggle"] * math.cos(age * 5.5 + puff["phase"] + i * 0.6)
+            py = y + math.sin(age * 4.8 + puff["phase"] + i) * (0.12 * puff["wiggle"])
+            pts2.append((int(round(x + dx + jiggle_x + wig * 0.6)), int(round(py + dy + jiggle_y))))
+        if len(pts2) >= 2:
+            draw.line(pts2, fill=255, width=w)
+
+        new_puffs.append(puff)
+    state["puffs"] = new_puffs
 
     return img
 
@@ -256,9 +321,42 @@ def _draw_emotion(emotion, width, height):
         rs = max(4, r // 2)
         draw.line((cx - rs, cy, cx + rs, cy), fill=255, width=lw)
     elif emotion == "sleepy":
-        # Fallback static line if animation path not used (tests / no device)
-        rs = max(4, r // 2)
-        draw.line((cx - rs, cy, cx + rs, cy), fill=255, width=lw)
+        # Fallback static cigarette (when animation isn't running, e.g. tests/no device).
+        sx = float(width) / 128.0
+        sy = float(height) / 64.0
+        s = min(sx, sy)
+        lw_s = max(1, int(round(2 * s)))
+
+        def _sxy(x, y):
+            return (int(round(x * sx)), int(round(y * sy)))
+
+        ember_rect = (16, 46, 28, 56)
+        body1 = (26, 50, 92, 42)
+        body2 = (26, 54, 94, 46)
+        filter_line = (88, 40, 88, 48)
+        smoke1 = [(24, 46), (18, 38), (22, 30), (16, 22), (20, 14), (14, 8), (18, 4)]
+        smoke2 = [(28, 44), (32, 34), (26, 26), (30, 18), (24, 10), (28, 5)]
+
+        ex0, ey0 = _sxy(ember_rect[0], ember_rect[1])
+        ex1, ey1 = _sxy(ember_rect[2], ember_rect[3])
+        draw.ellipse((ex0, ey0, ex1, ey1), outline=255, width=lw_s)
+
+        bx00, by00 = _sxy(body1[0], body1[1])
+        bx01, by01 = _sxy(body1[2], body1[3])
+        bx10, by10 = _sxy(body2[0], body2[1])
+        bx11, by11 = _sxy(body2[2], body2[3])
+        fx0, fy0 = _sxy(filter_line[0], filter_line[1])
+        fx1, fy1 = _sxy(filter_line[2], filter_line[3])
+
+        draw.line((bx00, by00, bx01, by01), fill=255, width=lw_s)
+        draw.line((bx10, by10, bx11, by11), fill=255, width=lw_s)
+        draw.line((fx0, fy0, fx1, fy1), fill=255, width=max(1, lw_s - 1))
+
+        hot_x, hot_y = _sxy(20, 47)
+        draw.ellipse((hot_x - 1, hot_y - 1, hot_x + 1, hot_y + 1), fill=255, outline=255)
+
+        draw.line([_sxy(x, y) for (x, y) in smoke1], fill=255, width=max(1, lw_s - 1))
+        draw.line([_sxy(x, y) for (x, y) in smoke2], fill=255, width=max(1, lw_s - 1))
     elif emotion == "love":
         draw.arc((cx - r, cy - r - 2, cx + r, cy + r - 2), 0, 180, fill=255, width=lw)
     elif emotion == "confused":
@@ -388,6 +486,11 @@ def main():
     else:
         rospy.logwarn("display_node: luma.oled / Pillow not installed — display disabled")
 
+    # Protect OLED writes: rospy callbacks may run in parallel threads.
+    # Without this, an idle animation frame can "win the race" and overwrite
+    # the oscillogram right after switching modes.
+    display_lock = threading.Lock()
+
     def _norm_posture_str(raw):
         return (raw or "stand").strip().lower() or "stand"
 
@@ -421,19 +524,26 @@ def main():
         if device is None:
             return
         try:
-            img = _compose_emotion_frame(emo)
-            if img is not None:
-                device.display(img)
+            with display_lock:
+                # Re-check under lock: during mode switches, an already-started
+                # emotion render can otherwise overwrite oscillogram.
+                if emotion_mode[0] and device is not None:
+                    img = _compose_emotion_frame(emo)
+                    if img is not None:
+                        device.display(img)
         except Exception as e:
             rospy.logdebug("display_node emotion render: %s", e)
 
     def _sleepy_anim_tick(_event):
-        if rospy.is_shutdown() or not _should_animate_sleepy():
-            return
         try:
-            img = _compose_emotion_frame("sleepy")
-            if img is not None:
-                device.display(img)
+            if rospy.is_shutdown() or not _should_animate_sleepy():
+                return
+            with display_lock:
+                if rospy.is_shutdown() or not _should_animate_sleepy():
+                    return
+                img = _compose_emotion_frame("sleepy")
+                if img is not None:
+                    device.display(img)
         except Exception:
             pass
 
@@ -441,7 +551,10 @@ def main():
         if device is None:
             return
         try:
-            device.display(_draw_oscillogram_waveform(values, W, H))
+            with display_lock:
+                # If we already switched back to emotion mode, don't overwrite.
+                if not emotion_mode[0] and device is not None:
+                    device.display(_draw_oscillogram_waveform(values, W, H))
         except Exception as e:
             rospy.logdebug("display_node oscillogram render: %s", e)
 

@@ -72,7 +72,7 @@ stateDiagram-v2
 **Приоритет эмоций (поверх пользовательской):**
 1. Падение — топик `/robot/posture` ∈ `{fall_forward, fall_backward, fall_left, fall_right}`: на экране `fall_emotion` (по умолчанию `angry`), осциллограмма отключена до `stand`. Для `angry` без `resources/emotions/angry.*` — векторная отрисовка (зубы, царапина). Источник: `joystick_control` в пакете `ainex_peripherals` (детектор по IMU).
 2. Обычная работа — эмоция с `/mouth/emotion` и осциллограмма по звуку.
-3. Долгое бездействие — параметр `idle_sleep_sec` (по умолчанию 60 с): нет слышимого звука, нет ходьбы (`/robot/is_moving`), режим эмоций → показ `idle_sleep_emotion` (по умолчанию `sleepy`). Для `sleepy` без `sleepy.*` в `resources/emotions/` — анимация «дыхание + Zzz». См. `idle_require_movement_signal` в конфиге.
+3. Долгое бездействие — параметр `idle_sleep_sec` (по умолчанию 60 с): нет слышимого звука, нет ходьбы (`/robot/is_moving`), режим эмоций → показ `idle_sleep_emotion` (по умолчанию `sleepy`). Для `sleepy` без `sleepy.*` в `resources/emotions/` — анимация «сигарета + дым». См. `idle_require_movement_signal` в конфиге.
 
 ### 2. audio_capture_node (mouth_audio_capture_node)
 

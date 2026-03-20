@@ -46,7 +46,7 @@ roslaunch sound_mouth_sync sound_mouth_sync.launch idle_require_movement_signal:
 `display_node` подписывается на состояние тела от `joystick_control`:
 
 - **Падение:** при `/robot/posture` = `fall_forward`, `fall_backward`, `fall_left`, `fall_right` на OLED показывается эмоция «злость» (`fall_emotion`, по умолчанию `angry`), осциллограмма отключается до возврата `stand`. Рисуется «злой» рот с зубами и царапиной; если положить `resources/emotions/angry.png` (или `.bmp`/`.gif`), будет показана эта картинка вместо векторной отрисовки.
-- **Долгое бездействие:** если нет **речи** (нет слышимого уровня на `/mouth/audio_wave` и не активен режим осциллограммы) и нет **ходьбы** (`/robot/is_moving` = false) в течение `idle_sleep_sec` (по умолчанию 60 с), показывается `idle_sleep_emotion` (по умолчанию `sleepy`). Для `sleepy` без файла `resources/emotions/sleepy.*` используется анимация «дыхание + Zzz»; свой `sleepy.png` отключает анимацию и показывает статичную картинку.
+- **Долгое бездействие:** если нет **речи** (нет слышимого уровня на `/mouth/audio_wave` и не активен режим осциллограммы) и нет **ходьбы** (`/robot/is_moving` = false) в течение `idle_sleep_sec` (по умолчанию 60 с), показывается `idle_sleep_emotion` (по умолчанию `sleepy`). Для `sleepy` без файла `resources/emotions/sleepy.*` используется анимация «сигарета + дым»; свой `sleepy.png` отключает анимацию и показывает статичную картинку.
 
 **Настройка времени и поведения**
 
