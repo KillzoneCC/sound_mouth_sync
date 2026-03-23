@@ -26,7 +26,7 @@ sound_mouth_sync:
     silence_return_sec: 3.0          # seconds of silence before returning to emotion mode
     # Idle sleep (mouth OLED): after no speech and no walking for idle_sleep_sec
     idle_sleep_enabled: true
-    idle_sleep_sec: 60.0             # seconds of inactivity before showing idle_sleep_emotion
+    idle_sleep_sec: 120.0            # seconds of inactivity before showing idle_sleep_emotion
     idle_sleep_emotion: sleepy
     fall_emotion: angry              # shown while /robot/posture is fall_*
     posture_topic: /robot/posture    # std_msgs/String from ainex_peripherals joystick_control

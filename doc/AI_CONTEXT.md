@@ -87,7 +87,7 @@ sound_mouth_sync:
     auto_mode: true                # auto-switch to oscillogram on sound
     silence_return_sec: 3.0        # seconds before returning to emotion
     idle_sleep_enabled: true
-    idle_sleep_sec: 60.0           # no speech + no walking → idle_sleep_emotion
+    idle_sleep_sec: 120.0          # no speech + no walking → idle_sleep_emotion (2 min)
     idle_sleep_emotion: sleepy
     fall_emotion: angry            # while posture is fall_*
     posture_topic: /robot/posture
@@ -173,6 +173,7 @@ Host:    VLC/aplay → PULSE_SERVER=tcp:127.0.0.1:4713 → (same PulseAudio abov
 - Host applications (VLC, aplay) must set `PULSE_SERVER=tcp:127.0.0.1:4713` to route audio through Docker's PulseAudio. Use `scripts/setup_host_audio.sh` for convenience.
 - The USB card has no functional hardware loopback — PulseAudio monitor is the only way to capture playback.
 - Most emotions are static; `sleepy` (idle, no custom asset) is animated (cigarette + smoke). See `ROADMAP.md` for further animation plans.
+- `/etc/pulse/client.conf` may become stale after reboot if written by a different uid. `audio_capture_node` now auto-detects and removes stale configs before starting PulseAudio.
 
 ## Change Log
 
@@ -183,3 +184,4 @@ Host:    VLC/aplay → PULSE_SERVER=tcp:127.0.0.1:4713 → (same PulseAudio abov
 | 2026-03-19 | AI Agent | Rewrite audio capture to native PulseAudio (no PipeWire). Add TCP:4713 for host access, setup_host_audio.sh, AUDIO_PLAYBACK.md developer guide. Update all docs. |
 | 2026-03-20 | AI Agent | Idle sleep + fall face: `joystick_control` publishes `/robot/posture`, `/robot/is_moving`; `display_node` subscribes; YAML + README + docs. |
 | 2026-03-20 | AI Agent | Animated sleepy (cigarette + smoke) when no `sleepy.*`; fall angry vector mouth + scratch when no `angry.*`. |
+| 2026-03-23 | AI Agent | Fix: audio_capture_node failed to start PulseAudio due to stale `/etc/pulse/client.conf` (pointed to non-existent socket of different uid, autospawn=no). Added `_pa_remove_stale_client_conf()` to detect and remove stale config before PA start. Changed `client.conf` to use `autospawn=yes` and TCP fallback. Increased `idle_sleep_sec` 60→120 s (2 min). |

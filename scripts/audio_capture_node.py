@@ -90,18 +90,42 @@ def _pa_is_running():
     return ok
 
 
+def _pa_remove_stale_client_conf():
+    """Remove /etc/pulse/client.conf if it points to a non-existent socket.
+
+    A previous run may have written a client.conf with default-server pointing
+    at a socket for a different uid.  Combined with autospawn=no this prevents
+    PulseAudio from starting on the next boot.
+    """
+    _client_conf = "/etc/pulse/client.conf"
+    try:
+        if not os.path.exists(_client_conf):
+            return
+        with open(_client_conf) as f:
+            content = f.read()
+        m = re.search(r"default-server\s*=\s*unix:(.+)", content)
+        if m:
+            sock = m.group(1).strip()
+            if not os.path.exists(sock):
+                os.remove(_client_conf)
+                rospy.logwarn("audio_capture: removed stale %s (socket %s missing)",
+                              _client_conf, sock)
+    except OSError:
+        pass
+
+
 def _pa_start():
     """Start the native PulseAudio daemon if not running."""
+    _pa_remove_stale_client_conf()
+
     if _pa_is_running():
         rospy.loginfo("audio_capture: PulseAudio already running")
         return True
 
-    # Kill any pipewire-pulse that might conflict
     subprocess.call(["pkill", "-f", "pipewire-pulse"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(0.5)
 
-    # Remove client.conf temporarily — it may prevent daemon from starting
     _client_conf = "/etc/pulse/client.conf"
     _client_bak = _client_conf + ".bak"
     try:
@@ -192,28 +216,36 @@ def _pa_enable_tcp(port=4713):
 
 
 def _pa_write_client_conf():
-    """Write /etc/pulse/client.conf so any user in the container can reach PA."""
+    """Write /etc/pulse/client.conf so any user in the container can reach PA.
+
+    Always prefer TCP fallback so that the conf survives reboots regardless of
+    which uid starts the daemon.  The unix socket path is uid-specific and may
+    become stale after reboot.
+    """
     conf_dir = "/etc/pulse"
     conf_path = os.path.join(conf_dir, "client.conf")
+
     env = _pa_env()
     xdg = env.get("XDG_RUNTIME_DIR", "")
     socket_path = os.path.join(xdg, "pulse", "native") if xdg else ""
 
-    lines = []
     if socket_path and os.path.exists(socket_path):
-        lines.append("default-server = unix:{}".format(socket_path))
+        server_line = "default-server = unix:{} tcp:127.0.0.1:4713".format(socket_path)
     else:
-        lines.append("default-server = tcp:127.0.0.1:4713")
-    lines.append("autospawn = no")
-    lines.append("")
+        server_line = "default-server = tcp:127.0.0.1:4713"
+
+    lines = [server_line, "autospawn = yes", ""]
 
     try:
         os.makedirs(conf_dir, exist_ok=True)
         with open(conf_path, "w") as f:
             f.write("\n".join(lines))
         if socket_path and os.path.exists(socket_path):
-            os.chmod(os.path.dirname(socket_path), 0o755)
-        rospy.loginfo("audio_capture: wrote %s → %s", conf_path, lines[0])
+            try:
+                os.chmod(os.path.dirname(socket_path), 0o755)
+            except OSError:
+                pass
+        rospy.loginfo("audio_capture: wrote %s → %s", conf_path, server_line)
     except OSError as e:
         rospy.logwarn("audio_capture: cannot write %s: %s", conf_path, e)
 

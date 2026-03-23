@@ -17,7 +17,7 @@
   <arg name="auto_mode" default="true" doc="Auto-switch to oscillogram on sound"/>
   <arg name="silence_return_sec" default="3.0" doc="Seconds of silence before returning to emotion"/>
   <arg name="idle_sleep_enabled" default="true" doc="Enable sleepy face after idle"/>
-  <arg name="idle_sleep_sec" default="60.0" doc="Seconds without motion+speech before idle sleep"/>
+  <arg name="idle_sleep_sec" default="120.0" doc="Seconds without motion+speech before idle sleep (2 min)"/>
   <arg name="idle_require_movement_signal" default="true" doc="Require /robot/is_moving before allowing idle sleep"/>
 
   <!-- Audio capture args -->
