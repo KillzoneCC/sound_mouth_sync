@@ -246,6 +246,24 @@ amixer -c 2 set Speaker 80%
 
 **Поэтому для отображения осциллограммы достаточно, чтобы звук проходил через PulseAudio-сервер контейнера.**
 
+### ALSA → PulseAudio (автоматически)
+
+`audio_capture_node` при старте записывает `/etc/asound.conf`, который перенаправляет ALSA default device через PulseAudio. Это означает, что **`aplay`, `arecord` и любые ALSA-приложения** автоматически проходят через PulseAudio и видны на осциллограмме:
+
+```bash
+aplay file.wav        # ✅ звук идёт через PA → осциллограмма работает
+paplay file.wav       # ✅ напрямую через PA
+speaker-test -t sine  # ✅ через PA
+```
+
+Если `/etc/asound.conf` отсутствует или повреждён, `aplay` может обойти PulseAudio и пойти напрямую в ALSA hw — тогда осциллограмма не увидит звук. Пересоздать:
+```bash
+cat > /etc/asound.conf << 'EOF'
+pcm.!default { type pulse }
+ctl.!default { type pulse }
+EOF
+```
+
 ## Troubleshooting
 
 ### Нет звука / осциллограмма не реагирует

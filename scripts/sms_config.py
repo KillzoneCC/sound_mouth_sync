@@ -86,6 +86,7 @@ def get_emotions_config():
 
 def get_display_settings():
     return _get_section("display", {
+        "start_display_mode": "oscillogram",
         "default_emotion": "neutral",
         "auto_mode": True,
         "silence_return_sec": 3.0,

@@ -40,6 +40,7 @@ oscillograms.
 | `config/sound_mouth_sync.yaml` | Parameters | emotions list, display settings, audio capture settings, hardware (I2C, rotate). |
 | `launch/sound_mouth_sync.launch` | Launch file | Loads config, starts both nodes with args. |
 | `resources/emotions/` | Custom PNGs | 128x64 1-bit. Loaded at node startup. Name = emotion name. |
+| `resources/idle_faces/` | Idle sleep animations | GIF files or folders of numbered PNGs (128x64 1-bit). Random pick on idle-sleep entry. See `resources/idle_faces/README.md`. |
 | `README.md` | User docs | Examples, installation, parameters, troubleshooting. |
 | `doc/ARCHITECTURE.md` | Architecture | Mermaid diagrams, node descriptions, data flow. |
 | `doc/AI_CONTEXT.md` | This file | AI agent rules, full context. |
@@ -175,6 +176,76 @@ Host:    VLC/aplay → PULSE_SERVER=tcp:127.0.0.1:4713 → (same PulseAudio abov
 - Most emotions are static; `sleepy` (idle, no custom asset) is animated (cigarette + smoke). See `ROADMAP.md` for further animation plans.
 - `/etc/pulse/client.conf` may become stale after reboot if written by a different uid. `audio_capture_node` now auto-detects and removes stale configs before starting PulseAudio.
 
+## Troubleshooting: два OLED-дисплея
+
+Робот использует **два** SSD1306 OLED-дисплея на одной I2C шине (bus 1):
+
+| Адрес | Назначение | Управляющий модуль |
+|-------|------------|-------------------|
+| **0x3C** (60) | Системный статус: SSID, IP, CPU, MEM, DISK, BAT | `ainex_bringup/scripts/oled_display.py` |
+| **0x3D** (61) | Рот: эмоции + осциллограмма | `sound_mouth_sync/scripts/display_node.py` |
+
+### Проблема: ничего не отображается на обоих дисплеях
+
+**Типичные причины и решения:**
+
+1. **ROS master не запущен**
+   - Симптом: `display_node.py` и `audio_capture_node.py` не могут стартовать.
+   - Проверка: `rosnode list` (ошибка «Unable to communicate with master»).
+   - Решение: запустить `roscore` или `roslaunch ainex_bringup bringup.launch`.
+
+2. **Ноды ждут init_pose/init_finish (подъём робота)**
+   - Симптом: `display_node` запущен, но OLED 0x3D пустой; в логе: «ожидание init_pose/init_finish».
+   - Причина: `ainex_controller` не установил `init_pose/init_finish=True` (робот не встал, контроллер не запущен, стенд без привода).
+   - Решение: задать таймаут и разрешить продолжение:
+     ```bash
+     roslaunch sound_mouth_sync sound_mouth_sync.launch wait_standup_timeout_sec:=30 proceed_without_standup:=true
+     ```
+     Или установить параметр вручную: `rosparam set /init_pose/init_finish true`.
+
+3. **Библиотека Adafruit_SSD1306 не установлена (oled_display.py)**
+   - Симптом: `oled_display.py` падает с `ModuleNotFoundError: No module named 'Adafruit_SSD1306'`.
+   - Решение: `oled_display.py` теперь использует `luma.oled` (та же библиотека, что и `display_node.py`). Убедитесь, что `pip3 install luma.oled` выполнен.
+
+4. **I2C устройства не видны**
+   - Проверка: `i2cdetect -y 1` — должны быть видны `3c` и `3d`.
+   - Решение: проверить физическое подключение дисплеев, перезагрузить Pi.
+
+5. **oled_display.py (systemd) перезаписывает дисплей 0x3C**
+   - Симптом: на экране видны SSID, IP, CPU, BAT вместо ожидаемого содержимого.
+   - Это нормально — `oled_display.service` обновляет 0x3C каждые 5 секунд.
+   - Если на роботе только один OLED (0x3C) и нужен рот: остановите `oled_display.service` и запустите `sound_mouth_sync` с `oled_i2c_address:=60`.
+
+6. **Конфликт двух драйверов на одном адресе**
+   - Симптом: мерцание, артефакты, случайные обновления на одном из дисплеев.
+   - Причина: два процесса пишут на один I2C адрес.
+   - Решение: каждый дисплей должен управляться **одним** процессом. `oled_display.py` пишет только на 0x3C, `display_node.py` — только на 0x3D. Убедитесь, что `oled_i2c_address` в launch = 61 (0x3D).
+
+### Проблема: дисплей рта (0x3D) пустой, биометрия (0x3C) работает
+
+1. Проверить, что ROS-нода запущена: `rosnode list | grep mouth_display`
+2. Проверить лог: `rosnode info /mouth_display_node`, затем `cat ~/.ros/log/latest/mouth_display_node-*.log`
+3. Проверить I2C: `i2cdetect -y 1` — должен быть `3d`
+4. Проверить владельца: `rostopic echo /oled_3d/active_driver` — должен быть `sound_mouth_sync`
+
+### Проблема: биометрия (0x3C) не отображается, рот (0x3D) работает
+
+1. Проверить процесс: `ps aux | grep oled_display`
+2. Если в Docker — `oled_display.service` не работает (нет systemd). Запустить вручную:
+   ```bash
+   python3 /home/ubuntu/ros_ws/src/ainex_bringup/scripts/oled_display.py &
+   ```
+3. Проверить I2C: `i2cdetect -y 1` — должен быть `3c`
+
+### Быстрая диагностика (одна команда)
+
+```bash
+i2cdetect -y 1 | grep "3[0-9a-f]"      # Оба дисплея видны?
+rosnode list 2>&1 | grep mouth           # ROS-нода рта запущена?
+ps aux | grep oled_display | grep -v grep  # Процесс биометрии запущен?
+rostopic echo -n 1 /mouth/current_mode   # Текущий режим рта
+```
+
 ## Change Log
 
 | Date | Author | Change |
@@ -185,3 +256,5 @@ Host:    VLC/aplay → PULSE_SERVER=tcp:127.0.0.1:4713 → (same PulseAudio abov
 | 2026-03-20 | AI Agent | Idle sleep + fall face: `joystick_control` publishes `/robot/posture`, `/robot/is_moving`; `display_node` subscribes; YAML + README + docs. |
 | 2026-03-20 | AI Agent | Animated sleepy (cigarette + smoke) when no `sleepy.*`; fall angry vector mouth + scratch when no `angry.*`. |
 | 2026-03-23 | AI Agent | Fix: audio_capture_node failed to start PulseAudio due to stale `/etc/pulse/client.conf` (pointed to non-existent socket of different uid, autospawn=no). Added `_pa_remove_stale_client_conf()` to detect and remove stale config before PA start. Changed `client.conf` to use `autospawn=yes` and TCP fallback. Increased `idle_sleep_sec` 60→120 s (2 min). |
+| 2026-03-23 | AI Agent | Dual-display troubleshooting: added comprehensive troubleshooting section for both OLEDs (0x3C biometrics, 0x3D mouth). Changed `bringup.launch` to `wait_standup_timeout_sec=30, proceed_without_standup=true` so displays don't hang forever when ainex_controller is absent. |
+| 2026-03-23 | AI Agent | Fix startup delay: removed `time.sleep(5)` from oled_display.py. Fix oscillogram: audio_capture_node now writes `/etc/asound.conf` routing ALSA default → PulseAudio, so `aplay` and all ALSA apps are captured by oscillogram. Added idle face animations: `resources/idle_faces/` accepts GIF or PNG-sequence folders; random pick on idle-sleep; falls back to built-in sleepy (cigarette+smoke) if empty. YAML: `idle_face_frame_ms`. |

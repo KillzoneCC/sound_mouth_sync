@@ -21,17 +21,20 @@ sound_mouth_sync:
     default_emotion: neutral
 
   display:
+    # Стартовый режим на OLED после подъёма: oscillogram (линия) | emotion
+    start_display_mode: oscillogram
     default_emotion: neutral
     auto_mode: true                  # auto-switch oscillogram on sound, back to emotion on silence
     silence_return_sec: 3.0          # seconds of silence before returning to emotion mode
     # Idle sleep (mouth OLED): after no speech and no walking for idle_sleep_sec
     idle_sleep_enabled: true
-    idle_sleep_sec: 120.0            # seconds of inactivity before showing idle_sleep_emotion
+    idle_sleep_sec: 120.0            # seconds of inactivity before idle animation overlay
     idle_sleep_emotion: sleepy
+    idle_face_frame_ms: 120          # default frame duration for idle face PNG sequences (ms)
     fall_emotion: angry              # shown while /robot/posture is fall_*
     posture_topic: /robot/posture    # std_msgs/String from ainex_peripherals joystick_control
     movement_topic: /robot/is_moving # std_msgs/Bool — True while gait moving
-    idle_require_movement_signal: true  # if true, never idle-sleep until at least one /robot/is_moving (no false sleep without joystick)
+    idle_require_movement_signal: false  # if true, idle-sleep waits for /robot/is_moving; false = works without joystick_controller
     audio_level_topic: /audio/level    # Float32 RMS 0..1 from audio_capture — wakes oscillogram if wave peaks are too low
 
   audio_capture:

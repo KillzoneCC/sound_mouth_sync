@@ -57,8 +57,11 @@ def _find_usb_alsa_card():
 # PulseAudio bootstrap
 # ---------------------------------------------------------------------------
 
+_pa_tcp_ready = False  # set True after _pa_enable_tcp() succeeds
+
+
 def _pa_env():
-    """Return env dict with XDG_RUNTIME_DIR for PulseAudio."""
+    """Return env dict with XDG_RUNTIME_DIR (and PULSE_SERVER once TCP is up)."""
     env = os.environ.copy()
     if not env.get("XDG_RUNTIME_DIR"):
         uid = os.getuid()
@@ -70,6 +73,8 @@ def _pa_env():
             d = "/tmp/pulse-runtime-{}".format(uid)
             os.makedirs(d, mode=0o700, exist_ok=True)
             env["XDG_RUNTIME_DIR"] = d
+    if _pa_tcp_ready:
+        env.setdefault("PULSE_SERVER", "tcp:127.0.0.1:4713")
     return env
 
 
@@ -90,33 +95,46 @@ def _pa_is_running():
     return ok
 
 
-def _pa_remove_stale_client_conf():
-    """Remove /etc/pulse/client.conf if it points to a non-existent socket.
+def _nuke_all_client_confs():
+    """Remove default-server from ALL pulse client.conf files before starting PA.
 
-    A previous run may have written a client.conf with default-server pointing
-    at a socket for a different uid.  Combined with autospawn=no this prevents
-    PulseAudio from starting on the next boot.
+    ANY default-server= line (global or per-user) prevents `pulseaudio --start`
+    from launching a new daemon.  We neutralise every known location.
+    After PA + TCP are up, _pa_write_client_conf() recreates a safe config.
     """
-    _client_conf = "/etc/pulse/client.conf"
-    try:
-        if not os.path.exists(_client_conf):
-            return
-        with open(_client_conf) as f:
-            content = f.read()
-        m = re.search(r"default-server\s*=\s*unix:(.+)", content)
-        if m:
-            sock = m.group(1).strip()
-            if not os.path.exists(sock):
-                os.remove(_client_conf)
-                rospy.logwarn("audio_capture: removed stale %s (socket %s missing)",
-                              _client_conf, sock)
-    except OSError:
-        pass
+    paths = [
+        "/etc/pulse/client.conf",
+        os.path.expanduser("~/.config/pulse/client.conf"),
+    ]
+    for path in paths:
+        try:
+            if not os.path.exists(path):
+                continue
+            with open(path) as f:
+                content = f.read()
+            if "default-server" not in content:
+                continue
+            # Try to remove
+            try:
+                os.remove(path)
+                rospy.logwarn("audio_capture: removed %s (had default-server)", path)
+                continue
+            except OSError:
+                pass
+            # Can't remove (permissions) — overwrite without default-server
+            try:
+                with open(path, "w") as f:
+                    f.write("autospawn = yes\n")
+                rospy.logwarn("audio_capture: cleared default-server from %s", path)
+            except OSError as e:
+                rospy.logerr("audio_capture: cannot fix %s: %s — PA may fail to start", path, e)
+        except OSError:
+            pass
 
 
 def _pa_start():
     """Start the native PulseAudio daemon if not running."""
-    _pa_remove_stale_client_conf()
+    _nuke_all_client_confs()
 
     if _pa_is_running():
         rospy.loginfo("audio_capture: PulseAudio already running")
@@ -125,14 +143,6 @@ def _pa_start():
     subprocess.call(["pkill", "-f", "pipewire-pulse"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(0.5)
-
-    _client_conf = "/etc/pulse/client.conf"
-    _client_bak = _client_conf + ".bak"
-    try:
-        if os.path.exists(_client_conf):
-            os.rename(_client_conf, _client_bak)
-    except OSError:
-        pass
 
     env = _pa_env()
     try:
@@ -197,9 +207,11 @@ def _pa_set_default(sink_name):
 
 def _pa_enable_tcp(port=4713):
     """Load module-native-protocol-tcp so host applications can connect."""
+    global _pa_tcp_ready
     ok, modules = _pa_run(["pactl", "list", "modules", "short"])
     if ok and "module-native-protocol-tcp" in modules:
         rospy.loginfo("audio_capture: PA TCP module already loaded")
+        _pa_tcp_ready = True
         return True
 
     ok, _ = _pa_run([
@@ -208,6 +220,7 @@ def _pa_enable_tcp(port=4713):
     ])
     if ok:
         rospy.loginfo("audio_capture: PA TCP access enabled on port %d (auth-anonymous)", port)
+        _pa_tcp_ready = True
         return True
 
     rospy.logwarn("audio_capture: failed to load module-native-protocol-tcp — "
@@ -216,38 +229,66 @@ def _pa_enable_tcp(port=4713):
 
 
 def _pa_write_client_conf():
-    """Write /etc/pulse/client.conf so any user in the container can reach PA.
+    """Make PA reachable for all users via TCP (port 4713).
 
-    Always prefer TCP fallback so that the conf survives reboots regardless of
-    which uid starts the daemon.  The unix socket path is uid-specific and may
-    become stale after reboot.
+    Strategy (never write default-server to global /etc/pulse/client.conf —
+    that blocks PA autospawn on next boot):
+      1. Write ~/.config/pulse/client.conf with default-server=tcp for the
+         current user so that pactl/parec/aplay from other sessions still work.
+      2. Set PULSE_SERVER env for our own subprocess calls (already in _pa_env).
     """
-    conf_dir = "/etc/pulse"
-    conf_path = os.path.join(conf_dir, "client.conf")
-
-    env = _pa_env()
-    xdg = env.get("XDG_RUNTIME_DIR", "")
-    socket_path = os.path.join(xdg, "pulse", "native") if xdg else ""
-
-    if socket_path and os.path.exists(socket_path):
-        server_line = "default-server = unix:{} tcp:127.0.0.1:4713".format(socket_path)
-    else:
-        server_line = "default-server = tcp:127.0.0.1:4713"
-
-    lines = [server_line, "autospawn = yes", ""]
-
+    home = os.path.expanduser("~")
+    user_conf_dir = os.path.join(home, ".config", "pulse")
+    user_conf = os.path.join(user_conf_dir, "client.conf")
+    lines = [
+        "default-server = tcp:127.0.0.1:4713",
+        "autospawn = yes",
+        "",
+    ]
     try:
-        os.makedirs(conf_dir, exist_ok=True)
-        with open(conf_path, "w") as f:
+        os.makedirs(user_conf_dir, exist_ok=True)
+        with open(user_conf, "w") as f:
             f.write("\n".join(lines))
-        if socket_path and os.path.exists(socket_path):
-            try:
-                os.chmod(os.path.dirname(socket_path), 0o755)
-            except OSError:
-                pass
-        rospy.loginfo("audio_capture: wrote %s → %s", conf_path, server_line)
+        rospy.loginfo("audio_capture: wrote %s (tcp:127.0.0.1:4713)", user_conf)
     except OSError as e:
-        rospy.logwarn("audio_capture: cannot write %s: %s", conf_path, e)
+        rospy.logwarn("audio_capture: cannot write %s: %s", user_conf, e)
+
+
+def _alsa_set_pulse_default():
+    """Write /etc/asound.conf so that aplay/arecord and all ALSA apps route through PulseAudio.
+
+    Without this, `aplay file.wav` goes directly to hw:X bypassing PulseAudio,
+    so audio_capture_node never sees the sound on usb_output.monitor.
+
+    We point ALSA at the TCP endpoint so any user (root, ubuntu, etc.)
+    can play audio without needing access to another user's unix socket.
+    """
+    asound_conf = "/etc/asound.conf"
+    content = (
+        "# Auto-generated by audio_capture_node (sound_mouth_sync).\n"
+        "# Routes all ALSA output through PulseAudio TCP so oscillogram captures everything.\n"
+        "pcm.!default {\n"
+        "    type pulse\n"
+        "    server tcp:127.0.0.1:4713\n"
+        "}\n"
+        "ctl.!default {\n"
+        "    type pulse\n"
+        "    server tcp:127.0.0.1:4713\n"
+        "}\n"
+    )
+    try:
+        existing = ""
+        if os.path.exists(asound_conf):
+            with open(asound_conf) as f:
+                existing = f.read()
+        if "tcp:127.0.0.1:4713" in existing:
+            rospy.loginfo("audio_capture: %s already routes ALSA→PA TCP", asound_conf)
+            return
+        with open(asound_conf, "w") as f:
+            f.write(content)
+        rospy.loginfo("audio_capture: wrote %s — ALSA default → PA TCP (aplay will show on oscillogram)", asound_conf)
+    except OSError as e:
+        rospy.logwarn("audio_capture: cannot write %s: %s — aplay won't route through PA", asound_conf, e)
 
 
 # ---------------------------------------------------------------------------
@@ -264,6 +305,39 @@ def _downsample_to_waveform(samples_f32, wave_width):
     return samples_f32[indices].tolist()
 
 
+def _wait_for_robot_standup(log_prefix="mouth_audio_capture_node"):
+    """См. display_node._wait_for_robot_standup — тот же контракт (параметры ноды)."""
+    timeout = float(rospy.get_param("~wait_standup_timeout_sec", 0.0))
+    _proceed = rospy.get_param("~proceed_without_standup", False)
+    proceed = (
+        _proceed is True
+        or (isinstance(_proceed, str) and _proceed.strip().lower() in ("true", "1", "yes"))
+    )
+    start = time.time()
+    while not rospy.is_shutdown():
+        if rospy.get_param("init_pose/init_finish", False):
+            rospy.loginfo("%s: робот встал (init_pose/init_finish), старт захвата звука", log_prefix)
+            return True
+        if timeout > 0.0 and (time.time() - start) > timeout:
+            if proceed:
+                rospy.logwarn(
+                    "%s: таймаут ожидания подъёма (%.0f с), proceed_without_standup=true",
+                    log_prefix,
+                    timeout,
+                )
+                return False
+            rospy.logerr(
+                "%s: таймаут init_pose/init_finish (%.0f с). Стенд: wait_standup_timeout_sec>0 "
+                "и proceed_without_standup:=true",
+                log_prefix,
+                timeout,
+            )
+            rospy.signal_shutdown("standup timeout (init_pose/init_finish)")
+            raise rospy.ROSInterruptException()
+        time.sleep(0.5)
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -275,6 +349,10 @@ def main():
     chunk_size = int(rospy.get_param("~chunk_size", 1024))
     wave_width = int(rospy.get_param("~wave_width", WAVE_WIDTH))
     chunk_bytes = chunk_size * SAMPLE_BYTES
+
+    if not _wait_for_robot_standup("mouth_audio_capture_node"):
+        if rospy.is_shutdown():
+            raise rospy.ROSInterruptException()
 
     # --- bootstrap PulseAudio ---
     if not _pa_start():
@@ -288,6 +366,7 @@ def main():
 
     _pa_enable_tcp()
     _pa_write_client_conf()
+    _alsa_set_pulse_default()
 
     pub_wave = rospy.Publisher("/mouth/audio_wave", Float32MultiArray, queue_size=5)
     pub_level = rospy.Publisher("/audio/level", Float32, queue_size=10)

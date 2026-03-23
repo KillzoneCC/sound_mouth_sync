@@ -7,18 +7,32 @@
     roslaunch sound_mouth_sync sound_mouth_sync.launch default_emotion:=happy
     roslaunch sound_mouth_sync sound_mouth_sync.launch idle_sleep_sec:=120
     roslaunch sound_mouth_sync sound_mouth_sync.launch auto_mode:=false
+
+  После подъёма робота (ainex_controller): по умолчанию обе ноды ждут init_pose/init_finish.
+  Стенд без привода: wait_standup_timeout_sec:=30 proceed_without_standup:=true
+
+  Если на экране SSID/IP/BAT — это ainex_bringup oled_display.py (I2C 0x3C). Отключите
+  oled_display.service, если рот должен занять тот же OLED: oled_i2c_address:=60 (0x3C).
 -->
 <launch>
   <!-- Load config into rosparam -->
   <rosparam file="$(find sound_mouth_sync)/config/sound_mouth_sync.yaml"/>
+  <!-- Владелец OLED 0x3D: sound_mouth_sync (рот) по умолчанию; motik — после rostopic pub (см. доку) -->
+  <param name="/oled_3d/active_driver_default" value="sound_mouth_sync"/>
+
+  <arg name="wait_standup_timeout_sec" default="0" doc="0=ждать init_pose/init_finish без лимита"/>
+  <arg name="proceed_without_standup" default="false" doc="после таймаута>0: старт без подъёма"/>
+  <!-- 61=0x3D «рот», 60=0x3C если один OLED как у oled_display (тогда остановите oled_display.service) -->
+  <arg name="oled_i2c_address" default="61" doc="7-bit I2C адрес SSD1306"/>
 
   <!-- Display node args -->
   <arg name="default_emotion" default="neutral" doc="Emotion shown at startup"/>
+  <arg name="start_display_mode" default="oscillogram" doc="oscillogram | emotion — режим на OLED после подъёма"/>
   <arg name="auto_mode" default="true" doc="Auto-switch to oscillogram on sound"/>
   <arg name="silence_return_sec" default="3.0" doc="Seconds of silence before returning to emotion"/>
   <arg name="idle_sleep_enabled" default="true" doc="Enable sleepy face after idle"/>
   <arg name="idle_sleep_sec" default="120.0" doc="Seconds without motion+speech before idle sleep (2 min)"/>
-  <arg name="idle_require_movement_signal" default="true" doc="Require /robot/is_moving before allowing idle sleep"/>
+  <arg name="idle_require_movement_signal" default="false" doc="Require /robot/is_moving before allowing idle sleep (false = works without joystick_controller)"/>
 
   <!-- Audio capture args -->
   <arg name="rate" default="48000" doc="Sample rate Hz (48000 = native USB card rate)"/>
@@ -27,16 +41,22 @@
   <!-- Node 1: OLED display -->
   <node name="mouth_display_node" pkg="sound_mouth_sync" type="display_node.py" output="screen">
     <param name="default_emotion" value="$(arg default_emotion)"/>
+    <param name="start_display_mode" value="$(arg start_display_mode)"/>
     <param name="auto_mode" value="$(arg auto_mode)"/>
     <param name="silence_return_sec" value="$(arg silence_return_sec)"/>
     <param name="idle_sleep_enabled" value="$(arg idle_sleep_enabled)"/>
     <param name="idle_sleep_sec" value="$(arg idle_sleep_sec)"/>
     <param name="idle_require_movement_signal" value="$(arg idle_require_movement_signal)"/>
+    <param name="wait_standup_timeout_sec" value="$(arg wait_standup_timeout_sec)"/>
+    <param name="proceed_without_standup" value="$(arg proceed_without_standup)"/>
+    <param name="i2c_address" value="$(arg oled_i2c_address)"/>
   </node>
 
   <!-- Node 2: Audio capture (PulseAudio monitor of USB sink) -->
   <node name="mouth_audio_capture_node" pkg="sound_mouth_sync" type="audio_capture_node.py" output="screen">
     <param name="rate" value="$(arg rate)"/>
     <param name="chunk_size" value="$(arg chunk_size)"/>
+    <param name="wait_standup_timeout_sec" value="$(arg wait_standup_timeout_sec)"/>
+    <param name="proceed_without_standup" value="$(arg proceed_without_standup)"/>
   </node>
 </launch>

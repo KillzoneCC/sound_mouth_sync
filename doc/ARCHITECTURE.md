@@ -193,3 +193,33 @@ sound_mouth_sync/
 Подробное руководство по воспроизведению звука: [AUDIO_PLAYBACK.md](AUDIO_PLAYBACK.md)
 
 Состояние тела для рта: узел `joystick_control` (`ainex_peripherals`) публикует с защёлкой `/robot/posture` и `/robot/is_moving` — см. `control/joystick_controller.py`.
+
+## Два дисплея: разделение ответственности
+
+```
+I2C bus 1
+├── 0x3C  ← ainex_bringup/oled_display.py   (системный статус: SSID, IP, CPU, BAT)
+└── 0x3D  ← sound_mouth_sync/display_node.py (рот: эмоции, осциллограмма)
+```
+
+Оба модуля используют `luma.oled` (`ssd1306`). Каждый пишет **строго** на свой адрес. При проблемах — см. раздел «Troubleshooting» в [AI_CONTEXT.md](AI_CONTEXT.md#troubleshooting-два-oled-дисплея).
+
+### Порядок запуска (bringup.launch)
+
+1. `base.launch` — `ainex_controller` поднимает робота, устанавливает `init_pose/init_finish=True`
+2. `sound_mouth_sync.launch` — `display_node` и `audio_capture_node` ждут `init_finish` до `wait_standup_timeout_sec` (30 с), затем стартуют с `proceed_without_standup=true`
+3. `oled_display.py` запускается как отдельный systemd-сервис (или фоновый процесс в Docker)
+
+### Частая ошибка: ноды висят, дисплей пустой
+
+Если `ainex_controller` не установил `init_pose/init_finish=True`, ноды `sound_mouth_sync` будут ждать. Решение — задать таймаут:
+
+```bash
+roslaunch sound_mouth_sync sound_mouth_sync.launch wait_standup_timeout_sec:=30 proceed_without_standup:=true
+```
+
+Или для отладки без робота:
+
+```bash
+rosparam set /init_pose/init_finish true
+```

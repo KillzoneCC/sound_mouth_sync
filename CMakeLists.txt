@@ -18,6 +18,7 @@ install(PROGRAMS
   scripts/usb_audio_reset.sh
   scripts/audio_diag.sh
   scripts/setup_host_audio.sh
+  scripts/verify_bringup_sound_motik.sh
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
