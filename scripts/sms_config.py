@@ -67,6 +67,7 @@ def get_hardware_settings():
     return _get_section("hardware", {
         "i2c_port": 1,
         "i2c_address": 0x3D,
+        "mouth_oled_startup_delay_sec": 7.0,
         "width": 128,
         "height": 64,
         "rotate": 0,
@@ -77,8 +78,8 @@ def get_emotions_config():
     return _get_section("emotions", {
         "list": [
             "neutral", "happy", "sad", "angry", "surprised", "excited",
-            "sleepy", "love", "confused", "scared", "bored", "calm",
-            "disgusted", "tired",
+            "sleepy", "sleep", "love", "confused", "scared", "bored", "calm",
+            "disgusted", "tired", "cat",
         ],
         "default_emotion": "neutral",
     })
@@ -92,6 +93,7 @@ def get_display_settings():
         "silence_return_sec": 3.0,
         "idle_sleep_enabled": True,
         "idle_sleep_sec": 60.0,
+        "idle_sleep_rotate_sec": 30.0,
         "idle_sleep_emotion": "sleepy",
         "fall_emotion": "angry",
         "posture_topic": "/robot/posture",

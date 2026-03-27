@@ -66,9 +66,20 @@ convert tmp.png -monochrome resources/emotions/myemotion.png
 - Примеры: `wink.png`, `big_smile.png`, `thinking_face.png`
 - Пользовательские эмоции имеют приоритет над встроенными (если имена совпадают)
 
+## Анимация `cat`
+
+Два кадра в `resources/emotions/`:
+
+- `cat_frame0.png`
+- `cat_frame1.png`
+
+Имя эмоции в топике: `cat`. Кадры чередуются каждые ~0.5 с. Файлы `cat_frame0` / `cat_frame1` не являются отдельными именами эмоций (в топик их не публикуйте).
+
 ## Встроенные эмоции
 
 Следующие эмоции рисуются программно и не требуют PNG:
 
 `neutral`, `happy`, `sad`, `angry`, `surprised`, `excited`, `sleepy`, `love`,
 `confused`, `scared`, `bored`, `calm`, `disgusted`, `tired`
+
+Плюс **`cat`** — если загружены `cat_frame0.png` и `cat_frame1.png`; иначе при выборе `cat` показывается нейтральное лицо.
