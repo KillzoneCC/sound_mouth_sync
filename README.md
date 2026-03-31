@@ -20,6 +20,12 @@ ROS-пакет для управления OLED-дисплеем SSD1306 128x64 
                                                          └──────────────────────┘
 ```
 
+Слой хранения команд эмоций/режима (`emotion_node`) включён в launch:
+
+- внешние команды остаются прежними: `/mouth/mode`, `/mouth/emotion`
+- `emotion_node` публикует `/mouth/effective_mode`, `/mouth/effective_emotion`
+- `display_node` рендерит по `effective_*`, что снижает связность рендера и логики хранения команд.
+
 Подробная архитектура: [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md)
 
 ## Быстрый старт

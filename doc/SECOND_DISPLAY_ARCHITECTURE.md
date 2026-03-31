@@ -19,6 +19,7 @@ roslaunch
   │
   ├─ rosparam load config/sound_mouth_sync.yaml   ← параметры в Parameter Server
   │
+  ├─ Запускает НОДУ 0: mouth_emotion_node
   ├─ Запускает НОДУ 1: mouth_display_node
   └─ Запускает НОДУ 2: mouth_audio_capture_node
 ```
@@ -61,8 +62,8 @@ mouth_display_node запустилась
   │         current_emotion = "neutral" (или default_emotion)
   ├─ 2.6  Отрисовка начальной эмоции на OLED
   ├─ 2.7  Создание Subscriber (6 штук):
-  │         /mouth/mode          ← внешняя команда
-  │         /mouth/emotion       ← внешняя команда
+  │         /mouth/effective_mode     ← from emotion_node
+  │         /mouth/effective_emotion  ← from emotion_node
   │         /mouth/audio_wave    ← от audio_capture
   │         /audio/level         ← от audio_capture
   │         /robot/posture       ← от joystick_control
@@ -106,6 +107,7 @@ rospy.on_shutdown:
 
 | # | ROS-имя | Скрипт | Что делает |
 |---|---------|--------|------------|
+| 0 | `mouth_emotion_node` | `emotion_node.py` | Хранит внешние команды эмоции/режима (`/mouth/mode`, `/mouth/emotion`) и публикует latched `effective_*` для display_node. |
 | 1 | `mouth_display_node` | `display_node.py` | Рисует на OLED: эмоции или осциллограмму. Решает, что показать (приоритеты: падение > ручной режим > авто > простой). Публикует фактическое состояние. |
 | 2 | `mouth_audio_capture_node` | `audio_capture_node.py` | Поднимает PulseAudio, захватывает весь системный звук через `parec`, публикует волну и уровень. |
 | — | *(внешняя)* `joystick_control` | пакет `ainex_peripherals` | Публикует `/robot/posture` и `/robot/is_moving`. |
@@ -123,6 +125,8 @@ rospy.on_shutdown:
 | `/audio/level` | `Float32` | `audio_capture` | `display` + внешние | RMS 0..1, подстраховка для тихих файлов |
 | `/mouth/current_mode` | `String` (latch) | `display` | внешние подписчики | Что сейчас на экране: `emotion` или `oscillogram` |
 | `/mouth/current_emotion` | `String` (latch) | `display` | внешние подписчики | Какая эмоция реально нарисована |
+| `/mouth/effective_mode` | `String` (latch) | `emotion_node` | `display` | Итоговая команда режима для дисплея |
+| `/mouth/effective_emotion` | `String` (latch) | `emotion_node` | `display` | Итоговая пользовательская эмоция для дисплея |
 
 ### 3.2 Подписка (Subscriber)
 
@@ -130,6 +134,10 @@ rospy.on_shutdown:
 |-------|-----|--------|------|-------|
 | `/mouth/mode` | `String` | внешние ноды | `display` | Команда: `"emotion"` или `"oscillogram"` |
 | `/mouth/emotion` | `String` | внешние ноды | `display` | Команда: имя эмоции (`happy`, `sad`, ...) |
+| `/mouth/mode` | `String` | внешние ноды | `emotion_node` | Внешняя команда режима |
+| `/mouth/emotion` | `String` | внешние ноды | `emotion_node` | Внешняя команда эмоции |
+| `/mouth/effective_mode` | `String` | `emotion_node` | `display` | Эффективная команда режима |
+| `/mouth/effective_emotion` | `String` | `emotion_node` | `display` | Эффективная команда эмоции |
 | `/mouth/audio_wave` | `Float32MultiArray` | `audio_capture` | `display` | Данные волны |
 | `/audio/level` | `Float32` | `audio_capture` | `display` | Доп. проверка уровня |
 | `/robot/posture` | `String` | `joystick_control` | `display` | `stand` / `fall_*` — приоритет падения |

@@ -31,7 +31,8 @@ oscillograms.
 
 | File | Role | Key Details |
 |------|------|-------------|
-| `scripts/display_node.py` | Node 1: OLED display | Subscribes `/mouth/mode`, `/mouth/emotion`, `/mouth/audio_wave`, `/robot/posture`, `/robot/is_moving`. Publishes `/mouth/current_mode`, `/mouth/current_emotion`. Priority: fallen → `fall_emotion`; idle timeout → `idle_sleep_emotion`; else user emotion + oscillogram. `sleepy` without `sleepy.png`: animated cigarette + smoke. Fall `angry` without `angry.png`: vector mouth + scratch. |
+| `scripts/emotion_node.py` | Node 0: emotion state | Subscribes external `/mouth/mode` + `/mouth/emotion`, stores effective state and republishes latched `/mouth/effective_mode` + `/mouth/effective_emotion`. Keeps external API stable while decoupling emotion storage from display rendering. |
+| `scripts/display_node.py` | Node 1: OLED display | Subscribes effective control topics (`/mouth/effective_mode`, `/mouth/effective_emotion`), plus `/mouth/audio_wave`, `/robot/posture`, `/robot/is_moving`. Publishes `/mouth/current_mode`, `/mouth/current_emotion`. Priority: fallen → `fall_emotion`; idle timeout → `idle_sleep_emotion`; else effective emotion + oscillogram. `sleepy` without `sleepy.png`: animated cigarette + smoke. Fall `angry` without `angry.png`: vector mouth + scratch. |
 | `scripts/audio_capture_node.py` | Node 2: audio capture | Starts native PulseAudio, creates ALSA sink for USB card, enables TCP:4713 for host access. Captures via `parec` from `usb_output.monitor`. Publishes `/mouth/audio_wave` (Float32MultiArray, 128 pts) and `/audio/level` (Float32). |
 | `scripts/sms_config.py` | Config module | Loads `config/sound_mouth_sync.yaml` + rosparam overrides. Used by both nodes. |
 | `scripts/usb_audio_reset.sh` | USB audio reset | Resets USB audio device via sysfs `authorized` toggle. Run with sudo after reboot if card not detected. |
@@ -49,12 +50,26 @@ oscillograms.
 
 ## Topics
 
-### Subscribed by display_node
+### Subscribed by emotion_node
 
 | Topic | Type | Values | Source |
 |-------|------|--------|--------|
 | `/mouth/mode` | `String` | `"emotion"`, `"oscillogram"` | Any external node |
 | `/mouth/emotion` | `String` | Any from VALID_EMOTIONS or custom PNG name | Any external node |
+
+### Published by emotion_node
+
+| Topic | Type | Latch | Description |
+|-------|------|-------|-------------|
+| `/mouth/effective_mode` | `String` | Yes | Effective mode for display_node |
+| `/mouth/effective_emotion` | `String` | Yes | Effective user emotion for display_node |
+
+### Subscribed by display_node
+
+| Topic | Type | Values | Source |
+|-------|------|--------|--------|
+| `/mouth/effective_mode` | `String` | `"emotion"`, `"oscillogram"` | emotion_node |
+| `/mouth/effective_emotion` | `String` | normalized emotion string | emotion_node |
 | `/mouth/audio_wave` | `Float32MultiArray` | 128 floats in [-1, 1] | audio_capture_node |
 | `/robot/posture` | `String` | `stand`, `fall_forward`, … | `joystick_control` (ainex_peripherals) |
 | `/robot/is_moving` | `Bool` | gait moving | `joystick_control` (ainex_peripherals) |
@@ -258,3 +273,4 @@ rostopic echo -n 1 /mouth/current_mode   # Текущий режим рта
 | 2026-03-23 | AI Agent | Fix: audio_capture_node failed to start PulseAudio due to stale `/etc/pulse/client.conf` (pointed to non-existent socket of different uid, autospawn=no). Added `_pa_remove_stale_client_conf()` to detect and remove stale config before PA start. Changed `client.conf` to use `autospawn=yes` and TCP fallback. Increased `idle_sleep_sec` 60→120 s (2 min). |
 | 2026-03-23 | AI Agent | Dual-display troubleshooting: added comprehensive troubleshooting section for both OLEDs (0x3C biometrics, 0x3D mouth). Changed `bringup.launch` to `wait_standup_timeout_sec=30, proceed_without_standup=true` so displays don't hang forever when ainex_controller is absent. |
 | 2026-03-23 | AI Agent | Fix startup delay: removed `time.sleep(5)` from oled_display.py. Fix oscillogram: audio_capture_node now writes `/etc/asound.conf` routing ALSA default → PulseAudio, so `aplay` and all ALSA apps are captured by oscillogram. Added idle face animations: `resources/idle_faces/` accepts GIF or PNG-sequence folders; random pick on idle-sleep; falls back to built-in sleepy (cigarette+smoke) if empty. YAML: `idle_face_frame_ms`. |
+| 2026-03-31 | AI Agent | Added `emotion_node.py` as a separate emotion storage layer. display_node now subscribes to `/mouth/effective_mode` and `/mouth/effective_emotion`, while external API `/mouth/mode` and `/mouth/emotion` remains unchanged via emotion_node pass-through. |

@@ -5,6 +5,7 @@ find_package(catkin REQUIRED)
 catkin_package()
 
 catkin_install_python(PROGRAMS
+  scripts/emotion_node.py
   scripts/display_node.py
   scripts/audio_capture_node.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}

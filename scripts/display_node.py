@@ -8,8 +8,8 @@ head (mouth area). Two display modes:
   oscillogram  — real-time audio waveform received from audio_capture_node
 
 Subscriptions:
-  /mouth/mode        (String)            "emotion" | "oscillogram"
-  /mouth/emotion     (String)            emotion name
+  /mouth/effective_mode    (String)            "emotion" | "oscillogram"
+  /mouth/effective_emotion (String)            emotion name
   /mouth/audio_wave  (Float32MultiArray) 128 values in -1..1
   /audio/level       (Float32)           chunk RMS 0..1 (audio_capture) — extra trigger for oscillogram
   /robot/posture     (String)            stand | fall_* (from joystick_control)
@@ -36,6 +36,8 @@ Parameters:
   ~movement_topic          remapped /robot/is_moving
   ~idle_require_movement_signal  require /robot/is_moving before idle sleep (default: true)
   ~audio_level_topic             subscribe for /audio/level (default from YAML)
+  ~mode_topic                    mode source topic (default: /mouth/effective_mode)
+  ~emotion_topic                 emotion source topic (default: /mouth/effective_emotion)
   ~i2c_port                I2C port number (default: 1)
   ~i2c_address             I2C address (default: 0x3D = 61)
   ~mouth_oled_startup_delay_sec  wait before opening mouth OLED (let 0x3C info display init first)
@@ -1318,6 +1320,8 @@ def main():
         "~audio_level_topic",
         display_cfg.get("audio_level_topic", "/audio/level"),
     )
+    mode_topic = rospy.get_param("~mode_topic", "/mouth/effective_mode")
+    emotion_topic = rospy.get_param("~emotion_topic", "/mouth/effective_emotion")
 
     def on_audio_level(msg):
         """Same energy scale as audio_capture_node (RMS / full-scale); catches quiet files."""
@@ -1358,13 +1362,15 @@ def main():
         if device is not None and _mouth_owns_oled():
             _show_oscillogram([0.0] * W)
 
-    rospy.Subscriber("/mouth/mode", String, on_mode, queue_size=1)
-    rospy.Subscriber("/mouth/emotion", String, on_emotion, queue_size=1)
+    rospy.Subscriber(mode_topic, String, on_mode, queue_size=1)
+    rospy.Subscriber(emotion_topic, String, on_emotion, queue_size=1)
     rospy.Subscriber("/mouth/audio_wave", Float32MultiArray,
                      on_audio_wave, queue_size=1)
     rospy.Subscriber(audio_level_topic, Float32, on_audio_level, queue_size=1)
     rospy.loginfo(
         "display_node: also subscribing %s for sound (oscillogram wake)", audio_level_topic)
+    rospy.loginfo(
+        "display_node: control topics mode=%s emotion=%s", mode_topic, emotion_topic)
     rospy.Subscriber(posture_topic, String, on_posture, queue_size=1)
     rospy.Subscriber(movement_topic, Bool, on_moving, queue_size=1)
 

@@ -47,11 +47,43 @@
 - Порог “тишины/звука” в авто-режиме: RMS >= 0.02 (см. документацию проекта).
 - `idle_require_movement_signal` по умолчанию `true`, чтобы избежать ложного “сна” при отсутствии `joystick_control`.
 - Ручная валидация idle-sleep (2026-03-31): при `idle_sleep_enabled=true`, `idle_sleep_sec=120.0`, `idle_require_movement_signal=true`, режиме `emotion`, `audio_level=0.0` и одном сообщении `/robot/is_moving=false` узел `display_node` переключает `/mouth/current_emotion` на `sleepy` и оставляет `/mouth/current_mode="emotion"`.
+- Разделение двух OLED подтверждено по коду:
+  - 0x3C: `ainex_bringup/scripts/oled_display.py` (системная информация, отдельный service).
+  - 0x3D: `sound_mouth_sync/scripts/display_node.py` (рот: эмоции+осциллограмма).
+  Они должны работать независимо; падение 0x3D не должно блокировать 0x3C.
+- В `ainex_bringup/launch/bringup.launch` остаётся риск несовместимости include-аргументов для `sound_mouth_sync.launch`:
+  - передаются `wait_after_controller`, `wait_controller_timeout_sec`, `proceed_without_standup`, `controller_settle_sec`,
+  - в `sound_mouth_sync.launch` объявлены `wait_standup_timeout_sec`, `proceed_without_standup`, `oled_i2c_address`, ... .
+  Это может ломать единый старт `bringup.launch` до запуска `sound_mouth_sync`.
+
+## 🧭 Архитектурный план (эмоции в отдельной ноде)
+- Цель: вынести логику выбора эмоций (user/fall/idle) из `display_node` в `emotion_node`, не ломая осциллограмму.
+- Новая ответственность:
+  - `emotion_node`: подписки `/mouth/emotion`, `/robot/posture`, `/robot/is_moving`, `/mouth/audio_wave`, `/audio/level`, `/mouth/mode`; публикует итоговую эмоцию и режим.
+  - `display_node`: только рендер OLED (получает итоговый `mode` + `emotion` + waveform).
+  - `audio_capture_node`: без изменений.
+- Backward compatibility:
+  - сохранить входные API `/mouth/mode`, `/mouth/emotion`.
+  - сохранить выходные `/mouth/current_mode`, `/mouth/current_emotion`, `/audio/level`.
+
+## ✅ Валидация после переноса в emotion_node
+- Пересборка: `catkin build sound_mouth_sync ainex_bringup` — успешно.
+- Запуск `ainex_bringup/launch/bringup.launch` из `src` — успешен по основным нодам рта:
+  - `/mouth_emotion_node`
+  - `/mouth_display_node`
+  - `/mouth_audio_capture_node`
+- Совместимость команд сохранена:
+  - публикация в `/mouth/emotion` меняет `/mouth/effective_emotion` и `/mouth/current_emotion`.
+  - публикация в `/mouth/mode` меняет `/mouth/effective_mode` и переключает `/mouth/current_mode`.
+- Осциллограмма не сломана:
+  - во время `paplay` observed `/mouth/current_mode: emotion -> oscillogram -> emotion`,
+  - после звука `/audio/level` возвращается к `0.0`.
 
 ## ✅ История изменений (Git-like)
 | Версия | Дата | Этап | Изменения | Статус |
 |--------|------|------|-----------|--------|
 | v0.1.0 | 2026-03-31 | Концепция | Создан минимальный контракт по прочитанным архитектурным документам | Активно |
+| v0.1.1 | 2026-03-31 | Детализация | Добавлена `emotion_node` (effective mode/emotion), display_node переведён на `effective_*` топики; сохранены внешние API `/mouth/mode` и `/mouth/emotion`; добавлены compatibility args в `sound_mouth_sync.launch` для include из `ainex_bringup` | Активно |
 
 ## 📊 Зависимости и граф компонентов
 - `audio_capture_node` -> `/mouth/audio_wave`, `/audio/level` -> `display_node`.

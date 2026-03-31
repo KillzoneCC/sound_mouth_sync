@@ -2,12 +2,13 @@
 
 ## Общая схема
 
-Пакет состоит из двух ROS-нод и конфигурационного модуля:
+Пакет состоит из трёх ROS-нод и конфигурационного модуля:
 
 ```mermaid
 graph LR
     subgraph soundMouthSync [sound_mouth_sync package]
         ACN[audio_capture_node]
+        EN[emotion_node]
         DN[display_node]
         CFG[sms_config.py]
         YAML[sound_mouth_sync.yaml]
@@ -25,8 +26,10 @@ graph LR
     PA -->|"usb_output.monitor"| ACN
     ACN -->|"/mouth/audio_wave<br/>Float32MultiArray"| DN
     ACN -->|"/audio/level<br/>Float32"| OtherNodes
-    OtherNodes -->|"/mouth/mode<br/>String"| DN
-    OtherNodes -->|"/mouth/emotion<br/>String"| DN
+    OtherNodes -->|"/mouth/mode<br/>String"| EN
+    OtherNodes -->|"/mouth/emotion<br/>String"| EN
+    EN -->|"/mouth/effective_mode<br/>String"| DN
+    EN -->|"/mouth/effective_emotion<br/>String"| DN
     JC2["joystick_control<br/>ainex_peripherals"]
     JC2 -->|"/robot/posture<br/>String"| DN
     JC2 -->|"/robot/is_moving<br/>Bool"| DN
@@ -39,6 +42,21 @@ graph LR
 ```
 
 ## Ноды
+
+### 0. emotion_node (mouth_emotion_node)
+
+**Файл:** `scripts/emotion_node.py`
+
+Тонкий слой хранения пользовательских команд эмоций/режима:
+
+- Подписывается на внешние API-топики:
+  - `/mouth/mode`
+  - `/mouth/emotion`
+- Публикует latched-топики для рендера:
+  - `/mouth/effective_mode`
+  - `/mouth/effective_emotion`
+
+Это позволяет держать внешние команды совместимыми и вынести хранение текущей эмоции/режима из `display_node`.
 
 ### 1. display_node (mouth_display_node)
 
@@ -58,7 +76,7 @@ stateDiagram-v2
 **Режим emotion:**
 - Рисует встроенную эмоцию (Pillow / ImageDraw)
 - Или загружает пользовательский PNG из `resources/emotions/`
-- Обновляется по сообщению в `/mouth/emotion`
+- Обновляется по сообщению в `/mouth/effective_emotion`
 
 **Режим oscillogram:**
 - Принимает 128 значений (-1..1) из `/mouth/audio_wave`
@@ -139,8 +157,10 @@ graph LR
     ACN[audio_capture_node] -->|"/mouth/audio_wave<br/>Float32MultiArray<br/>128 pts, -1..1"| DN[display_node]
     ACN -->|"/audio/level<br/>Float32, 0..1"| EXT["External nodes"]
 
-    EXT2["External nodes"] -->|"/mouth/mode<br/>String<br/>'emotion'|'oscillogram'"| DN
-    EXT2 -->|"/mouth/emotion<br/>String<br/>'happy'|'sad'|..."| DN
+    EXT2["External nodes"] -->|"/mouth/mode<br/>String<br/>'emotion'|'oscillogram'"| EN[emotion_node]
+    EXT2 -->|"/mouth/emotion<br/>String<br/>'happy'|'sad'|..."| EN
+    EN -->|"/mouth/effective_mode<br/>String"| DN
+    EN -->|"/mouth/effective_emotion<br/>String"| DN
 
     DN -->|"/mouth/current_mode<br/>String, latch"| ECHO["rostopic echo"]
     DN -->|"/mouth/current_emotion<br/>String, latch"| ECHO

@@ -20,7 +20,11 @@
   <!-- Владелец OLED 0x3D: sound_mouth_sync (рот) по умолчанию; motik — после rostopic pub (см. доку) -->
   <param name="/oled_3d/active_driver_default" value="sound_mouth_sync"/>
 
-  <arg name="wait_standup_timeout_sec" default="0" doc="0=ждать init_pose/init_finish без лимита"/>
+  <!-- Backward-compatible args (used by ainex_bringup include) -->
+  <arg name="wait_after_controller" default="true" doc="compat: accepted from ainex_bringup"/>
+  <arg name="wait_controller_timeout_sec" default="0" doc="compat: maps to wait_standup_timeout_sec"/>
+  <arg name="controller_settle_sec" default="0.0" doc="compat: accepted from ainex_bringup"/>
+  <arg name="wait_standup_timeout_sec" default="$(arg wait_controller_timeout_sec)" doc="0=ждать init_pose/init_finish без лимита"/>
   <arg name="proceed_without_standup" default="false" doc="после таймаута>0: старт без подъёма"/>
   <!-- 61=0x3D «рот», 60=0x3C если один OLED как у oled_display (тогда остановите oled_display.service) -->
   <arg name="oled_i2c_address" default="61" doc="7-bit I2C адрес SSD1306"/>
@@ -38,6 +42,20 @@
   <!-- Audio capture args -->
   <arg name="rate" default="48000" doc="Sample rate Hz (48000 = native USB card rate)"/>
   <arg name="chunk_size" default="1024" doc="Samples per chunk"/>
+  <arg name="mode_input_topic" default="/mouth/mode" doc="External mode command topic"/>
+  <arg name="emotion_input_topic" default="/mouth/emotion" doc="External emotion command topic"/>
+  <arg name="effective_mode_topic" default="/mouth/effective_mode" doc="Effective mode topic for display"/>
+  <arg name="effective_emotion_topic" default="/mouth/effective_emotion" doc="Effective emotion topic for display"/>
+
+  <!-- Node 0: Emotion state holder (keeps external API stable) -->
+  <node name="mouth_emotion_node" pkg="sound_mouth_sync" type="emotion_node.py" output="screen">
+    <param name="default_mode" value="$(arg start_display_mode)"/>
+    <param name="default_emotion" value="$(arg default_emotion)"/>
+    <param name="input_mode_topic" value="$(arg mode_input_topic)"/>
+    <param name="input_emotion_topic" value="$(arg emotion_input_topic)"/>
+    <param name="output_mode_topic" value="$(arg effective_mode_topic)"/>
+    <param name="output_emotion_topic" value="$(arg effective_emotion_topic)"/>
+  </node>
 
   <!-- Node 1: OLED display -->
   <node name="mouth_display_node" pkg="sound_mouth_sync" type="display_node.py" output="screen">
@@ -52,6 +70,8 @@
     <param name="proceed_without_standup" value="$(arg proceed_without_standup)"/>
     <param name="i2c_address" value="$(arg oled_i2c_address)"/>
     <param name="mouth_oled_startup_delay_sec" value="$(arg mouth_oled_startup_delay_sec)"/>
+    <param name="mode_topic" value="$(arg effective_mode_topic)"/>
+    <param name="emotion_topic" value="$(arg effective_emotion_topic)"/>
   </node>
 
   <!-- Node 2: Audio capture (PulseAudio monitor of USB sink) -->
