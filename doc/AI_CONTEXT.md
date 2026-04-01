@@ -31,7 +31,7 @@ oscillograms.
 
 | File | Role | Key Details |
 |------|------|-------------|
-| `scripts/emotion_node.py` | Node 0: emotion state | Subscribes external `/mouth/mode` + `/mouth/emotion`, stores effective state and republishes latched `/mouth/effective_mode` + `/mouth/effective_emotion`. Keeps external API stable while decoupling emotion storage from display rendering. |
+| `scripts/emotion_node.py` | Node 0: emotion state | Subscribes external `/mouth/mode` + `/mouth/emotion`, stores effective state and republishes latched `/mouth/effective_mode` + `/mouth/effective_emotion`. Optional demo: `~emotion_cycle_enabled` + `~emotion_cycle_interval_sec` — steps through `mouth_emotion_render.EMOTION_CYCLE_SEQUENCE` only while effective mode is `emotion` (oscillogram freezes the index). Stop with Ctrl+C. |
 | `scripts/display_node.py` | Node 1: OLED display | Subscribes effective control topics (`/mouth/effective_mode`, `/mouth/effective_emotion`), plus `/mouth/audio_wave`, `/robot/posture`, `/robot/is_moving`. Publishes `/mouth/current_mode`, `/mouth/current_emotion`. Composes emotion frames via `mouth_emotion_render` and pushes to I2C; draws oscillogram locally. Priority unchanged: fallen → `fall_emotion`; idle timeout → idle pool; auto oscillogram on sound. |
 | `scripts/mouth_emotion_render.py` | Emotion pixel layer | Pillow 1-bit drawing: built-in emotions, custom PNG cache contract, idle folder/GIF, cigarette/cat/yawn builtins, fall angry art. Imported by `display_node` only (no rospy). |
 | `scripts/audio_capture_node.py` | Node 2: audio capture | Starts native PulseAudio, creates ALSA sink for USB card, enables TCP:4713 for host access. Captures via `parec` from `usb_output.monitor`. Publishes `/mouth/audio_wave` (Float32MultiArray, 128 pts) and `/audio/level` (Float32). |
@@ -96,8 +96,8 @@ All under namespace `/sound_mouth_sync/`:
 ```yaml
 sound_mouth_sync:
   emotions:
-    list: [neutral, happy, sad, angry, surprised, excited, sleepy, love,
-           confused, scared, bored, calm, disgusted, tired]
+    list: [neutral, happy, sad, angry, surprised, excited, sleepy, sleep, love,
+           cute, confused, scared, bored, calm, disgusted, tired, cat]
     default_emotion: neutral
   display:
     default_emotion: neutral
@@ -124,10 +124,10 @@ sound_mouth_sync:
 
 ## Valid Emotions (built-in)
 
-`neutral`, `happy`, `sad`, `angry`, `surprised`, `excited`, `sleepy`, `love`,
-`confused`, `scared`, `bored`, `calm`, `disgusted`, `tired`
+`neutral`, `happy`, `sad`, `angry`, `surprised`, `excited`, `sleepy`, `sleep`,
+`love`, `cute`, `confused`, `scared`, `bored`, `calm`, `disgusted`, `tired`, `cat`
 
-Custom emotions: place PNG in `resources/emotions/<name>.png`.
+Custom / asset emotions: PNG in `resources/emotions/<name>.png` (e.g. `cute.png`, `cat_frame0.png`).
 
 ## Auto-mode Behaviour
 

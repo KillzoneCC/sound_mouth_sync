@@ -3,7 +3,7 @@
 """
 Pixel rendering for mouth emotions (SSD1306 1-bit 128x64).
 
-Imported only by display_node (compose + I2C). emotion_node does not import this file.
+Imported by display_node (compose + I2C) and emotion_node (демо-круг `EMOTION_CYCLE_SEQUENCE` only).
 No rospy — keeps tests and offline import clean.
 
 Oscillogram drawing stays in display_node only.
@@ -27,8 +27,30 @@ except ImportError:
 
 VALID_EMOTIONS = (
     "neutral", "happy", "sad", "angry", "surprised", "excited",
-    "sleepy", "sleep", "love", "confused", "scared", "bored", "calm",
+    "sleepy", "sleep", "love", "cute", "confused", "scared", "bored", "calm",
     "disgusted", "tired", "cat",
+)
+
+# Порядок для демо-круга в emotion_node (~emotion_cycle_enabled).
+# Каждое имя ∈ VALID_EMOTIONS (иначе display откатит нормализацию к neutral).
+EMOTION_CYCLE_SEQUENCE = (
+    "neutral",
+    "happy",
+    "sad",
+    "angry",
+    "surprised",
+    "excited",
+    "love",
+    "cute",
+    "confused",
+    "scared",
+    "bored",
+    "calm",
+    "disgusted",
+    "tired",
+    "sleepy",
+    "sleep",
+    "cat",
 )
 
 FALL_POSTURES = frozenset(
@@ -84,7 +106,8 @@ def load_idle_faces(resources_dir, width, height):
                     durations.append(max(30, int(dur)) if dur else default_ms)
                 if len(frames) >= 2:
                     name = os.path.splitext(entry)[0]
-                    result.append({"name": name, "frames": frames, "durations": durations})
+                    result.append(
+                        {"name": name, "frames": frames, "durations": durations})
             except Exception:
                 pass
 
@@ -96,7 +119,8 @@ def load_idle_faces(resources_dir, width, height):
             frames = []
             for png_name in pngs:
                 try:
-                    img = Image.open(os.path.join(path, png_name)).convert("1").resize((width, height))
+                    img = Image.open(os.path.join(path, png_name)).convert(
+                        "1").resize((width, height))
                     frames.append(img)
                 except Exception:
                     pass
@@ -150,13 +174,16 @@ def draw_builtin_idle_yawn_zzz(width, height, elapsed):
 
     if phase == 0:
         r = 10
-        draw.ellipse((mouth_cx - r, mouth_cy - r, mouth_cx + r, mouth_cy + r), outline=255, width=2)
+        draw.ellipse((mouth_cx - r, mouth_cy - r, mouth_cx +
+                     r, mouth_cy + r), outline=255, width=2)
     elif phase == 1:
         r = 14
-        draw.ellipse((mouth_cx - r, mouth_cy - r + 2, mouth_cx + r, mouth_cy + r + 2), outline=255, width=2)
+        draw.ellipse((mouth_cx - r, mouth_cy - r + 2, mouth_cx +
+                     r, mouth_cy + r + 2), outline=255, width=2)
     else:
         r = 8
-        draw.ellipse((mouth_cx - r, mouth_cy - r, mouth_cx + r, mouth_cy + r), outline=255, width=2)
+        draw.ellipse((mouth_cx - r, mouth_cy - r, mouth_cx +
+                     r, mouth_cy + r), outline=255, width=2)
 
     zzz_x_base = cx + 10
     zzz_y_base = cy - 8
@@ -354,7 +381,8 @@ def load_custom_emotion_image(emotion, resources_dir, width, height):
                 img = Image.open(path).convert("1").resize((width, height))
                 return img
             except Exception as e:
-                log.warning("mouth_emotion_render: failed to load %s: %s", path, e)
+                log.warning(
+                    "mouth_emotion_render: failed to load %s: %s", path, e)
     return None
 
 
@@ -426,6 +454,21 @@ def draw_emotion(emotion, width, height):
     elif emotion == "love":
         draw.arc((cx - r, cy - r - 2, cx + r, cy + r - 2),
                  0, 180, fill=255, width=lw)
+    elif emotion == "cute":
+        # Fallback if resources/emotions/cute.* отсутствует: упрощённый «uwu»
+        ro = 7
+        draw.ellipse((cx - 38 - ro, cy - 6 - ro, cx - 38 + ro, cy - 6 + ro),
+                     outline=255, width=2)
+        draw.ellipse((cx + 38 - ro, cy - 6 - ro, cx + 38 + ro, cy - 6 + ro),
+                     outline=255, width=2)
+        for dx in (-38, 38):
+            for k in range(3):
+                ox = dx + (k - 1) * 3
+                draw.line((ox - 4, cy - 9 + k * 2, ox + 4, cy - 3 + k * 2),
+                          fill=255, width=1)
+        w = max(8, r // 2)
+        draw.arc((cx - w, cy - 2, cx, cy + 10), 200, 340, fill=255, width=2)
+        draw.arc((cx, cy - 2, cx + w, cy + 10), 200, 340, fill=255, width=2)
     elif emotion == "confused":
         n = 9
         pts = [(cx - r + (2 * r * i) // (n - 1), cy + (6 if i % 2 else -6))
@@ -481,7 +524,8 @@ def idle_face_pick_random(idle_faces, idle_face_state, builtin_idle_state, sleep
         n_builtins = len(_BUILTIN_IDLE_ANIM_NAMES)
         prev = builtin_idle_state["anim_idx"]
         choices = [i for i in range(n_builtins) if i != prev]
-        builtin_idle_state["anim_idx"] = random.choice(choices) if choices else 0
+        builtin_idle_state["anim_idx"] = random.choice(
+            choices) if choices else 0
         builtin_idle_state["start"] = time.time()
         sleepy_anim_reset(sleepy_state)
 
@@ -569,7 +613,8 @@ def compose_emotion_frame(
                 return draw_emotion("neutral", width, height)
             if emo == "sleep":
                 return draw_emotion("neutral", width, height)
-            frame = builtin_idle_get_frame(width, height, builtin_idle_state, sleepy_state)
+            frame = builtin_idle_get_frame(
+                width, height, builtin_idle_state, sleepy_state)
             if frame is not None:
                 return frame
     if emo == "sleepy":

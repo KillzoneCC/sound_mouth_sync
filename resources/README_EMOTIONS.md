@@ -82,4 +82,6 @@ convert tmp.png -monochrome resources/emotions/myemotion.png
 `neutral`, `happy`, `sad`, `angry`, `surprised`, `excited`, `sleepy`, `love`,
 `confused`, `scared`, `bored`, `calm`, `disgusted`, `tired`
 
+Плюс **`cute`** (милота): штатно картинка `cute.png`; если файла нет — упрощённая векторная отрисовка в коде.
+
 Плюс **`cat`** — если загружены `cat_frame0.png` и `cat_frame1.png`; иначе при выборе `cat` показывается нейтральное лицо.

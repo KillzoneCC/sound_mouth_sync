@@ -2,31 +2,57 @@
 
 ROS-пакет для управления OLED-дисплеем SSD1306 128x64 (I2C 0x3D) на голове робота Ainex (область рта). Два режима работы:
 
-1. **emotion** — статичное выражение рта (happy, sad, neutral, ...) или пользовательские PNG-изображения
+1. **emotion** — статичное выражение рта (happy, sad, neutral, **cute**, …) или пользовательские PNG-изображения; картинка на OLED **0x3D** обновляется по топикам ниже
 2. **oscillogram** — визуализация звука в реальном времени (осциллограмма всех звуков, воспроизводимых системой)
 
 ## Архитектура
 
 ```
-┌───────────────────────┐       /mouth/audio_wave        ┌──────────────────────┐
-│  audio_capture_node   │──────(Float32MultiArray)──────▶│   display_node       │
-│  (захват звука)       │                                │   (OLED 0x3D)        │
-│                       │──── /audio/level (Float32)     │                      │
-└───────────────────────┘                                │  /mouth/mode ◀──(in) │
-                                                         │  /mouth/emotion◀(in) │
-                                                         │                      │
-                                                         │  /mouth/current_mode │
-                                                         │  /mouth/current_emot.│
-                                                         └──────────────────────┘
+  внешние узлы / rostopic
+         │  /mouth/mode          /mouth/effective_mode  ────────┐
+         │  /mouth/emotion       /mouth/effective_emotion ────┤
+         ▼                              ▲                      │
+┌────────────────────┐                  │                      │
+│   emotion_node     │  latch           │                      │
+│ (mouth_emotion_    │──────────────────┘                      │
+│      node)         │                                         ▼
+└────────────────────┘                              ┌──────────────────────┐
+         ▲                                          │   display_node       │
+         │  опция: круг эмоций                       │   (OLED 0x3D)        │
+         │  см. блок ниже                           │                      │
+                                                     │  sub: effective_*    │
+┌───────────────────────┐  /mouth/audio_wave         │  sub: audio_wave,     │
+│  audio_capture_node   │  (Float32MultiArray) ─────▶│       audio/level    │
+│  (захват звука)       │                            │  pub: current_mode   │
+│                       │  /audio/level (Float32) ──▶│       current_emotion│
+└───────────────────────┘                            └──────────────────────┘
 ```
 
-Слой хранения команд эмоций/режима (`emotion_node`) включён в launch:
+Слой хранения команд эмоций/режима (**`emotion_node`**) включён в `sound_mouth_sync.launch`:
 
-- внешние команды остаются прежними: `/mouth/mode`, `/mouth/emotion`
-- `emotion_node` публикует `/mouth/effective_mode`, `/mouth/effective_emotion`
-- `display_node` рендерит по `effective_*`, что снижает связность рендера и логики хранения команд.
+- внешний API не меняется: **`/mouth/mode`**, **`/mouth/emotion`**
+- **`emotion_node`** публикует с защёлкой **`/mouth/effective_mode`**, **`/mouth/effective_emotion`**
+- **`display_node`** подписан на **`effective_*`** (не на «сырые» `/mouth/mode` и `/mouth/emotion` напрямую) и рисует на **I2C 0x3D**; публикует фактическое состояние в **`/mouth/current_*`**
 
-Подробная архитектура: [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md)
+### Круг эмоций в архитектуре (как это работает)
+
+Внутри **`emotion_node`** опционально включается **таймер**: раз в **`~emotion_cycle_interval_sec`** (например, 3 с) следующее имя из списка **`EMOTION_CYCLE_SEQUENCE`** в `mouth_emotion_render.py` записывается в **`current_emotion`** и снова публикуется на **`/mouth/effective_emotion`**. **`display_node`** получает то же сообщение и обновляет кадр на OLED **0x3D**. Порядок имён в коде фиксирован (нейтральная → happy → … → **cute** → … → `cat` → снова с начала).
+
+- При **`_emotion_cycle_enabled:=true`** при старте ноды эффективный режим принудительно **`emotion`**, чтобы не слать отдельно `/mouth/mode` перед демо.
+- Пока на **`/mouth/effective_mode`** висит **`oscillogram`**, счётчик круга **не увеличивается** (демо «заморожено», пока режим снова не `emotion`).
+- Включённый круг **перезаписывает** то, что могли бы задать вручную через `/mouth/emotion`, до следующего тика или смены режима.
+
+Запуск **только** `emotion_node` с кругом (без второго экземпляра с тем же именем; штатный `roslaunch` с `mouth_emotion_node` при этом не должен быть запущен):
+
+```bash
+rosrun sound_mouth_sync emotion_node.py \
+  _emotion_cycle_enabled:=true \
+  _emotion_cycle_interval_sec:=3.0
+```
+
+В типичном сценарии рядом поднимают **`display_node`** и **`audio_capture_node`** (или целиком `roslaunch sound_mouth_sync sound_mouth_sync.launch` с параметрами круга в XML, см. раздел «Демо-круг эмоций» ниже).
+
+Подробная схема и ноды: [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md)
 
 ## Быстрый старт
 
@@ -73,7 +99,7 @@ roslaunch sound_mouth_sync sound_mouth_sync.launch idle_require_movement_signal:
 | Топик | Тип | Описание |
 |-------|-----|----------|
 | `/mouth/mode` | `std_msgs/String` | Режим: `"emotion"` или `"oscillogram"` |
-| `/mouth/emotion` | `std_msgs/String` | Эмоция: `neutral`, `happy`, `sad`, `angry`, `surprised`, `excited`, `sleepy`, `love`, `confused`, `scared`, `bored`, `calm`, `disgusted`, `tired` |
+| `/mouth/emotion` | `std_msgs/String` | Эмоция: `neutral`, `happy`, `sad`, `angry`, `surprised`, `excited`, `sleepy`, `love`, `cute` (милота), `confused`, `scared`, `bored`, `calm`, `disgusted`, `tired`, `cat` |
 | `/mouth/audio_wave` | `std_msgs/Float32MultiArray` | 128 значений от -1.0 до 1.0 для осциллограммы |
 | `/robot/posture` | `std_msgs/String` | `stand` или `fall_*` — публикует `joystick_control` (`ainex_peripherals`) |
 | `/robot/is_moving` | `std_msgs/Bool` | `true`, пока робот идёт по джойстику — тот же узел |
@@ -100,6 +126,12 @@ rostopic pub -1 /mouth/mode std_msgs/String "data: 'oscillogram'"
 
 ### Установка эмоции
 
+Команды идут на **`/mouth/emotion`** → `emotion_node` → **`/mouth/effective_emotion`** → `display_node` → физический **рот SSD1306 по I2C 0x3D**. Сначала включите режим эмоций (если сейчас осциллограмма):
+
+```bash
+rostopic pub -1 /mouth/mode std_msgs/String "data: 'emotion'"
+```
+
 ```bash
 # Улыбка
 rostopic pub -1 /mouth/emotion std_msgs/String "data: 'happy'"
@@ -112,7 +144,52 @@ rostopic pub -1 /mouth/emotion std_msgs/String "data: 'surprised'"
 
 # Нейтральное выражение
 rostopic pub -1 /mouth/emotion std_msgs/String "data: 'neutral'"
+
+# Милота (cute) — на дисплее 0x3D: штатно `resources/emotions/cute.png` (128×64, 1-bit);
+# если файла нет, рисуется упрощённый векторный вариант в коде
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'cute'"
 ```
+
+Проверка факта на шине рта:
+
+```bash
+rostopic echo /mouth/effective_emotion
+rostopic echo /mouth/current_emotion
+```
+
+### Демо-круг эмоций (`emotion_node`)
+
+Опционально `mouth_emotion_node` может **автоматически переключать** эмоции по фиксированному списку (удобно для витрины без отдельных публикаций). Порядок задан в коде `scripts/mouth_emotion_render.py` → **`EMOTION_CYCLE_SEQUENCE`**:
+
+`neutral` → `happy` → `sad` → `angry` → `surprised` → `excited` → `love` → **`cute`** → `confused` → `scared` → `bored` → `calm` → `disgusted` → `tired` → `sleepy` → `sleep` → `cat` → (снова с начала).
+
+| Параметр (на `mouth_emotion_node`) | По умолчанию | Смысл |
+|-----------------------------------|---------------|--------|
+| `~emotion_cycle_enabled` | `false` | Включить автоматический круг |
+| `~emotion_cycle_interval_sec` | `3.0` | Пауза между шагами (сек), минимум ~0.3 |
+
+Поведение:
+
+- При **`emotion_cycle_enabled:=true`** при старте эффективный режим принудительно **`emotion`**, чтобы круг был виден на **0x3D** без отдельной команды `/mouth/mode` (один терминал для демо).
+- Шаг круга выполняется **только пока эффективный режим — `emotion`**; на осциллограмме индекс круга **не продвигается** (см. `emotion_node.py`).
+- При **`emotion_cycle_enabled:=true`** таймер может **перебивать** ручные `rostopic pub /mouth/emotion`; для стабильного ручного переключения держите цикл **выключенным** (значение по умолчанию или явно `_emotion_cycle_enabled:=false`).
+- Если при включённом круге нужен старт сразу в эмоциях одним процессом, используйте те же приватные параметры при запуске `emotion_node` (см. ниже), не поднимая **второй** экземпляр ноды поверх `roslaunch`.
+
+**Включение круга** (выберите один вариант):
+
+1. **Свой launch** — в узле `mouth_emotion_node` добавьте параметры:
+   ```xml
+   <param name="emotion_cycle_enabled" value="true"/>
+   <param name="emotion_cycle_interval_sec" value="3.0"/>
+   ```
+2. **Отдельный запуск только `emotion_node`** (только если штатный `mouth_emotion_node` из `sound_mouth_sync.launch` **не** запущен — иначе будет конфликт имён):
+   ```bash
+   rosrun sound_mouth_sync emotion_node.py \
+     _emotion_cycle_enabled:=true \
+     _emotion_cycle_interval_sec:=3.0
+   ```
+
+Подробности: [doc/AI_CONTEXT.md](doc/AI_CONTEXT.md) (строка про `emotion_node`).
 
 ### Публикация тестовой осциллограммы
 
@@ -281,6 +358,8 @@ sudo apt install pulseaudio pulseaudio-utils alsa-utils
 | `chunk_size` | `1024` | Сэмплов на один фрагмент |
 | `mouth_display_redraw_after_sec` | `0` (YAML `display`) | Повторная отрисовка рта через N с после старта; `8`–`10` при кратком «мусоре» на экране |
 | `reassert_effective_topics_after_sec` | `0` (YAML `display`) | Повторная публикация `/mouth/effective_*` через N с |
+| `emotion_cycle_enabled` | `false` (на `mouth_emotion_node`) | Демо-круг по `EMOTION_CYCLE_SEQUENCE`; см. раздел выше |
+| `emotion_cycle_interval_sec` | `3.0` | Интервал шага круга (сек) |
 
 ## Устранение неполадок
 
