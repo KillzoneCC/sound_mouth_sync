@@ -2,7 +2,7 @@
 
 ## Общая схема
 
-Пакет состоит из трёх ROS-нод и конфигурационного модуля:
+Пакет состоит из трёх ROS-нод, конфигурационного модуля и **библиотеки пиксельного рендера эмоций** (`mouth_emotion_render.py` — не нода, без rospy).
 
 ```mermaid
 graph LR
@@ -10,9 +10,12 @@ graph LR
         ACN[audio_capture_node]
         EN[emotion_node]
         DN[display_node]
+        MER["mouth_emotion_render.py<br/>(PIL, не нода)"]
         CFG[sms_config.py]
         YAML[sound_mouth_sync.yaml]
     end
+
+    DN -.->|import| MER
 
     HostApps["Host apps (VLC, aplay)<br/>PULSE_SERVER=tcp:localhost:4713"]
     OLED["OLED SSD1306 128x64<br/>I2C 0x3D"]
@@ -58,11 +61,34 @@ graph LR
 
 Это позволяет держать внешние команды совместимыми и вынести хранение текущей эмоции/режима из `display_node`.
 
+**Пиксели на экране не рисует** — только топики. Вся отрисовка рта приходит из `display_node`, который для кадров эмоций вызывает модуль ниже.
+
+### Модуль `mouth_emotion_render.py` (рендер эмоций, не ROS-нода)
+
+**Файл:** `scripts/mouth_emotion_render.py`  
+**Назначение:** собрать 1-битный кадр PIL под SSD1306 128×64 для режима *emotion* (idle, падение, кастомные PNG, встроенные дуги/линии). Устанавливается рядом с нодами (`CMakeLists.txt` → `install(FILES ...)`).
+
+| Что внутри | Роль |
+|------------|------|
+| `VALID_EMOTIONS`, `FALL_POSTURES` | Справочники имён эмоций и постур падения (дублируют контракт с `display_node` при нормализации). |
+| `load_custom_emotion_image`, `load_idle_faces` | Загрузка из `resources/emotions/` (png/bmp/gif) и из `resources/idle_faces/` (мультикадровые GIF или папки PNG с длительностями). |
+| `draw_emotion` | Векторные «рожицы» по имени (happy, sad, angry, sleepy как статичная сигарета и т.д.). |
+| `draw_emotion_angry_fall` | Отдельный кадр для падения: зубы + царапины, если нет `angry.png`. |
+| `draw_sleepy_animated`, `sleepy_anim_reset` | Анимация «сигарета + дым» (частицы), состояние в словаре `sleepy_state`. |
+| `draw_builtin_idle_cat`, `draw_builtin_idle_yawn_zzz` | Встроенные idle-анимации, если `idle_faces/` пуст. |
+| `cat_animation_bitmap` / `sleep_animation_bitmap` | Покадровая смена из предзагруженных битмапов `cat_frame0/1`, `sleep_frame1…3` (как раньше из `resources/emotions/`). |
+| `idle_face_pick_random`, `idle_face_get_frame`, `builtin_idle_get_frame` | Выбор и проигрывание случайной idle-анимации из папки или тройки cigarette/cat/yawn. |
+| `compose_emotion_frame` | **Единая точка композиции:** приоритет PNG → cat/sleep битмапы → падение → оверлей idle-sleep из YAML/pool → обычная эмоция. Сюда из `display_node` передаются кэш картинок, флаги `robot_fallen`, `idle_sleep_active`, словари состояния анимаций. |
+
+**Чего здесь нет:** ROS, I2C, осциллограмма (`display_node` рисует волну сам), логика таймеров «когда переключить режим» — всё это остаётся в `display_node`.
+
+**Кто импортирует:** только `display_node`. `emotion_node` модуль не трогает.
+
 ### 1. display_node (mouth_display_node)
 
 **Файл:** `scripts/display_node.py`
 
-Управляет OLED-дисплеем. Поддерживает параметр `rotate` (0/1/2/3) для физически перевёрнутого монтажа (по умолчанию `rotate=2` — дисплей перевёрнут на 180°). Работает в одном из двух режимов:
+Управляет OLED-дисплеем и импортирует `mouth_emotion_render` для всех кадров режима *emotion*; осциллограмма рисуется **только** в этом файле (`_draw_oscillogram_waveform`). Поддерживает параметр `rotate` (0/1/2/3) для физически перевёрнутого монтажа (по умолчанию `rotate=2` — дисплей перевёрнут на 180°). Работает в одном из двух режимов:
 
 ```mermaid
 stateDiagram-v2
@@ -74,9 +100,8 @@ stateDiagram-v2
 ```
 
 **Режим emotion:**
-- Рисует встроенную эмоцию (Pillow / ImageDraw)
-- Или загружает пользовательский PNG из `resources/emotions/`
-- Обновляется по сообщению в `/mouth/effective_emotion`
+- Кадр собирается через `mouth_emotion_render.compose_emotion_frame` (встроенные дуги, кастомные PNG из `resources/emotions/`, idle из `resources/idle_faces/`, анимации cat/sleep/sleepy)
+- Обновляется по `/mouth/effective_emotion` и внутренним таймерам (idle-sleep, анимации)
 
 **Режим oscillogram:**
 - Принимает 128 значений (-1..1) из `/mouth/audio_wave`
@@ -176,10 +201,13 @@ sound_mouth_sync/
 ├── config/
 │   └── sound_mouth_sync.yaml      # All parameters (incl. rotate, device auto-detect)
 ├── launch/
-│   └── sound_mouth_sync.launch    # Launches both nodes
+│   └── sound_mouth_sync.launch    # Launches nodes (display, audio, emotion)
 ├── scripts/
-│   ├── display_node.py            # Node 1: OLED display (rotate support)
+│   ├── emotion_node.py             # Node 0: effective mode/emotion topics
+│   ├── display_node.py            # Node 1: OLED (emotion via mouth_emotion_render + oscillogram)
 │   ├── audio_capture_node.py      # Node 2: audio capture (PulseAudio, USB auto-detect)
+│   ├── mouth_emotion_render.py   # PIL 1-bit emotion frames (imported by display_node, not a node)
+│   ├── mouth_audio_gates.py       # Waveform / level thresholds (display + tests)
 │   ├── sms_config.py              # Config module
 │   ├── usb_audio_reset.sh         # USB audio device reset after reboot
 │   ├── audio_diag.sh              # Audio diagnostics script
@@ -219,7 +247,7 @@ sound_mouth_sync/
 ```
 I2C bus 1
 ├── 0x3C  ← ainex_bringup/oled_display.py   (системный статус: SSID, IP, CPU, BAT)
-└── 0x3D  ← sound_mouth_sync/display_node.py (рот: эмоции, осциллограмма)
+└── 0x3D  ← sound_mouth_sync/display_node.py (рот: эмоции через mouth_emotion_render + осциллограмма в display_node)
 ```
 
 Адрес **0x3D** на модуле рта задаётся **железом** (перемычка ADDR на плате SSD1306). В `config/sound_mouth_sync.yaml` → `hardware.i2c_address` должно совпадать с этой перемычкой (по умолчанию `0x3D`). Два независимых изображения на одной шине **невозможны**, если оба чипа слушают один адрес.

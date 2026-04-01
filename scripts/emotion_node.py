@@ -3,6 +3,9 @@
 """
 emotion_node — stores and republishes effective mouth emotion/mode.
 
+Pixel drawing for emotions lives in mouth_emotion_render.py; display_node imports
+that module to push frames to the OLED. This node does not render pixels.
+
 Goal:
   Keep external API stable (/mouth/mode, /mouth/emotion) while decoupling
   emotion command storage from display_node.

@@ -19,8 +19,8 @@ roslaunch
   │
   ├─ rosparam load config/sound_mouth_sync.yaml   ← параметры в Parameter Server
   │
-  ├─ Запускает НОДУ 0: mouth_emotion_node
-  ├─ Запускает НОДУ 1: mouth_display_node
+  ├─ Запускает НОДУ 0: mouth_emotion_node (хранит effective_mode / effective_emotion)
+  ├─ Запускает НОДУ 1: mouth_display_node (рендер через mouth_emotion_render + I2C)
   └─ Запускает НОДУ 2: mouth_audio_capture_node
 ```
 
@@ -58,8 +58,8 @@ mouth_display_node запустилась
   │         /mouth/current_mode    (String, latch)
   │         /mouth/current_emotion (String, latch)
   ├─ 2.5  Публикация начального состояния:
-  │         current_mode = "emotion"
-  │         current_emotion = "neutral" (или default_emotion)
+  │         current_mode / current_emotion — по `start_display_mode` и `default_emotion`
+  │         (часто после старта oscillogram + neutral, см. launch/YAML)
   ├─ 2.6  Отрисовка начальной эмоции на OLED
   ├─ 2.7  Создание Subscriber (6 штук):
   │         /mouth/effective_mode     ← from emotion_node

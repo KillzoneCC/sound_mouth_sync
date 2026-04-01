@@ -85,6 +85,13 @@
 - Эмоции: `rostopic pub` на `/mouth/mode`=`emotion`, `/mouth/emotion`=`happy` → `/mouth/current_emotion` и `/mouth/effective_emotion` = **happy**, `/mouth/current_mode` = **emotion**.
 - Прикладных `srv` у пакета нет; только стандартные `get_loggers` / `set_logger_level` у нод.
 
+## ✅ Валидация 2026-04-01 (пересборка + bringup + mouth-only стенд)
+- `catkin build sound_mouth_sync ainex_bringup` — успешно (чистый `bash --noprofile --norc`, `source /opt/ros/noetic/setup.bash`).
+- `roslaunch ainex_bringup bringup.launch` (короткий прогон с `mouth_proceed_without_standup:=true`, `mouth_wait_controller_timeout_sec:=3`): порядок старта совпадает с `bringup.launch` — камера → base → джойстик → **mouth_emotion_node (11) → mouth_display_node (12) → mouth_audio_capture_node (13)** → web_video → rosbridge → app → teleop_fetch → topic_list.
+- Отдельный `roslaunch sound_mouth_sync sound_mouth_sync.launch` на отдельном `roscore`: публикация `/mouth/emotion`=`happy` даёт `/mouth/effective_emotion` и `/mouth/current_emotion`=`happy`; режим остаётся `emotion` на `/mouth/current_mode`.
+- Idle-pool: при `idle_sleep_sec:=22` и `idle_require_movement_signal:=false` через ~22 с ожидания `/mouth/current_emotion` перешёл на элемент пула (зафиксировано: `cat`); при `idle_sleep_sec:=120` в YAML поведение то же, масштаб времени — 2 минуты.
+- Осциллограмма: в логе `display_node` зафиксирован переход `mode -> oscillogram` при тесте авто/ручного режима; на стенде `rostopic hz /mouth/audio_wave` мог не показать частоту, если `parec` завершился (см. WARN в логе `audio_capture`). Для полной проверки волны нужны стабильный PulseAudio USB sink и воспроизведение в `usb_output` (см. `doc/AUDIO_PLAYBACK.md`).
+
 ## ✅ История изменений (Git-like)
 | Версия | Дата | Этап | Изменения | Статус |
 |--------|------|------|-----------|--------|
@@ -92,9 +99,10 @@
 | v0.1.1 | 2026-03-31 | Детализация | Добавлена `emotion_node` (effective mode/emotion), display_node переведён на `effective_*` топики; сохранены внешние API `/mouth/mode` и `/mouth/emotion`; добавлены compatibility args в `sound_mouth_sync.launch` для include из `ainex_bringup` | Активно |
 
 ## 📊 Зависимости и граф компонентов
-- `audio_capture_node` -> `/mouth/audio_wave`, `/audio/level` -> `display_node`.
-- `display_node` -> I2C -> OLED.
-- `display_node` -> читает `/mouth/mode`, `/mouth/emotion`, `/robot/posture`, `/robot/is_moving`.
+- `audio_capture_node` → публикует `/mouth/audio_wave`, `/audio/level` → подписчик `display_node`.
+- `emotion_node` → подписан на `/mouth/mode`, `/mouth/emotion` → публикует `/mouth/effective_mode`, `/mouth/effective_emotion` (latch) → `display_node`.
+- `display_node` → читает `effective_*`, `/mouth/audio_wave`, `/audio/level`, `/robot/posture`, `/robot/is_moving` → I2C → OLED.
+- Пиксели эмоций: модуль `mouth_emotion_render.py` (импорт из `display_node`, без rospy).
 
 ## 🔌 Интеграция и автозапуск (`ainex_bringup`)
 - Автозапуск в systemd: `ainex_bringup/service/start_app_node.service` вызывает `roslaunch ainex_bringup bringup.launch` (через `scripts/source_env.bash`).
@@ -102,7 +110,7 @@
   1. Камера: `ainex_peripherals/launch/usb_cam_with_calib.launch` (внутри стартует `usb_cam.launch` и `image_calib.launch`).
   2. Base: `ainex_bringup/launch/base.launch` (стартует `ainex_controller.launch` + `ainex_peripherals/launch/imu.launch`).
   3. Управление джойстиком: `ainex_peripherals/launch/joystick_control.launch` (узлы `joy` и `joystick_control.py`).
-  4. Mouth OLED + захват аудио: `sound_mouth_sync/launch/sound_mouth_sync.launch` (стартуют `mouth_display_node` и `mouth_audio_capture_node`, загружается `config/sound_mouth_sync.yaml`).
+  4. Mouth OLED + захват аудио: `sound_mouth_sync/launch/sound_mouth_sync.launch` (порядок нод в launch: `mouth_emotion_node` → `mouth_display_node` → `mouth_audio_capture_node`; загружается `config/sound_mouth_sync.yaml`).
   5. `web_video_server` (node).
   6. Web/ROS bridge: `ainex_app/launch/rosbridge.launch` (узел `rosbridge_websocket` + `rosapi`).
   7. App gameplay: `ainex_app/launch/start.launch` (включает recognition-ноды и `ainex_app/app_node.py`).
