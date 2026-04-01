@@ -51,10 +51,8 @@
   - 0x3C: `ainex_bringup/scripts/oled_display.py` (системная информация, отдельный service).
   - 0x3D: `sound_mouth_sync/scripts/display_node.py` (рот: эмоции+осциллограмма).
   Они должны работать независимо; падение 0x3D не должно блокировать 0x3C.
-- В `ainex_bringup/launch/bringup.launch` остаётся риск несовместимости include-аргументов для `sound_mouth_sync.launch`:
-  - передаются `wait_after_controller`, `wait_controller_timeout_sec`, `proceed_without_standup`, `controller_settle_sec`,
-  - в `sound_mouth_sync.launch` объявлены `wait_standup_timeout_sec`, `proceed_without_standup`, `oled_i2c_address`, ... .
-  Это может ломать единый старт `bringup.launch` до запуска `sound_mouth_sync`.
+- Опционально при двух SSD1306 на одном адресе: env `AINEX_STATS_PAUSE_ON_3C_UNLESS_3D` в `oled_display` (не трогает `bringup.launch`); в YAML `display` — `mouth_display_redraw_after_sec`, `reassert_effective_topics_after_sec`. Независимые картинки на двух экранах требуют разных I2C-адресов (рот 0x3D — перемычка на модуле).
+- **Повторяемость симптома «SSID/IP на дисплее рта (ожид. 0x3D)»:** это **не** устранено «навсегда» только обновлением ПО. Если снова **оба** модуля на **0x3C** или с шины пропал **0x3D**, картинка может вернуться. **Длительное выключение питания само по себе** не объясняет дубль — корень в **I2C-адресации и обвязке**, а не в «простое». Рабочая конфигурация: `i2cdetect` показывает **3c и 3d**, рот на **0x3D**. Что делать при повторении — единый чеклист: `README.md` (раздел про два OLED), `doc/SECOND_DISPLAY_ARCHITECTURE.md` §8–8.6, `doc/ARCHITECTURE.md`, `doc/AI_CONTEXT.md`.
 
 ## 🧭 Архитектурный план (эмоции в отдельной ноде)
 - Цель: вынести логику выбора эмоций (user/fall/idle) из `display_node` в `emotion_node`, не ломая осциллограмму.
@@ -78,6 +76,14 @@
 - Осциллограмма не сломана:
   - во время `paplay` observed `/mouth/current_mode: emotion -> oscillogram -> emotion`,
   - после звука `/audio/level` возвращается к `0.0`.
+
+## ✅ Валидация 2026-04-01 (пересборка + рантайм на стенде)
+- `catkin build sound_mouth_sync ainex_bringup` в `/home/ubuntu/ros_ws` — успешно (bash + `source /opt/ros/noetic/setup.bash`).
+- I2C: `i2cdetect -y 1` — на шине **0x3C** и **0x3D** одновременно; `rosparam get /mouth_display_node/i2c_address` → **61** (0x3D для рта).
+- Уже работающий `bringup.launch` (localhost): ноды `mouth_emotion_node`, `mouth_display_node`, `mouth_audio_capture_node` в `rosnode list`; `/mouth/audio_wave` публикуется.
+- Осциллограмма: при `paplay` (WAV через PulseAudio/USB) в логе `rostopic echo /mouth/current_mode` зафиксирован переход **emotion → oscillogram**.
+- Эмоции: `rostopic pub` на `/mouth/mode`=`emotion`, `/mouth/emotion`=`happy` → `/mouth/current_emotion` и `/mouth/effective_emotion` = **happy**, `/mouth/current_mode` = **emotion**.
+- Прикладных `srv` у пакета нет; только стандартные `get_loggers` / `set_logger_level` у нод.
 
 ## ✅ История изменений (Git-like)
 | Версия | Дата | Этап | Изменения | Статус |
@@ -103,8 +109,5 @@
   8. VR телеоперация: `teleop_fetch/launch/teleop_fetch.launch`.
   9. Сервис проверки топиков: `proverka_nod/launch/topici_list.launch`.
 
-⚠️ Потенциальный риск совместимости launch-аргументов:
-- `ainex_bringup/launch/bringup.launch` передаёт в `sound_mouth_sync.launch` аргументы `wait_after_controller`, `wait_controller_timeout_sec`, `proceed_without_standup`, `controller_settle_sec`.
-- В текущей версии `sound_mouth_sync/launch/sound_mouth_sync.launch` эти `arg` не объявлены (в файле присутствуют только `default_emotion`, `auto_mode`, `silence_return_sec`, `idle_*`, `rate`, `chunk_size`).
-- Если ROS-ланчер жёстко требует объявление `<arg>` при передаче — автозапуск может падать; требуется проверка запуска `roslaunch ainex_bringup bringup.launch` в вашей среде.
+- Совместимость include: в `sound_mouth_sync.launch` объявлены compat-аргументы `wait_after_controller`, `wait_controller_timeout_sec`, `controller_settle_sec`, `proceed_without_standup` (см. файл launch).
 

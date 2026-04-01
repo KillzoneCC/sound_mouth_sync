@@ -99,6 +99,24 @@ def main():
     rospy.Subscriber(in_emotion_topic, String, on_emotion, queue_size=1)
 
     publish_all()
+
+    reassert_sec = float(
+        rospy.get_param(
+            "~reassert_effective_topics_after_sec",
+            display_cfg.get("reassert_effective_topics_after_sec", 0.0),
+        )
+    )
+    if reassert_sec > 0:
+
+        def _reassert_effective(_evt):
+            publish_all()
+            rospy.loginfo(
+                "emotion_node: reasserted effective mode/emotion after %.1fs",
+                reassert_sec,
+            )
+
+        rospy.Timer(rospy.Duration(reassert_sec), _reassert_effective, oneshot=True)
+
     rospy.loginfo(
         "emotion_node started: in(mode=%s, emotion=%s) -> out(mode=%s, emotion=%s), defaults: mode=%s emotion=%s",
         in_mode_topic,

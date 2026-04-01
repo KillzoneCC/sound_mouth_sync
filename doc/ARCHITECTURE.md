@@ -222,7 +222,13 @@ I2C bus 1
 └── 0x3D  ← sound_mouth_sync/display_node.py (рот: эмоции, осциллограмма)
 ```
 
-Оба модуля используют `luma.oled` (`ssd1306`). Каждый пишет **строго** на свой адрес. При проблемах — см. раздел «Troubleshooting» в [AI_CONTEXT.md](AI_CONTEXT.md#troubleshooting-два-oled-дисплея).
+Адрес **0x3D** на модуле рта задаётся **железом** (перемычка ADDR на плате SSD1306). В `config/sound_mouth_sync.yaml` → `hardware.i2c_address` должно совпадать с этой перемычкой (по умолчанию `0x3D`). Два независимых изображения на одной шине **невозможны**, если оба чипа слушают один адрес.
+
+`oled_display.py` пишет только на **0x3C**; `display_node.py` — на адрес из конфига (**0x3D**). Опционально: env **`AINEX_STATS_PAUSE_ON_3C_UNLESS_3D`** — не обновлять статус на 0x3C, пока на шине не виден рот на **0x3D** (подробности в [SECOND_DISPLAY_ARCHITECTURE.md](SECOND_DISPLAY_ARCHITECTURE.md), §8.6). Параметры **`mouth_display_redraw_after_sec`** / **`reassert_effective_topics_after_sec`** в YAML (`display`) — мягкая подстраховка после старта.
+
+Симптом «на рту как на 0x3C» **может снова проявиться**, если вернётся дублирующий адрес **0x3C** на двух модулях или пропадёт **0x3D**; только обновление документации/ПО **не** даёт гарантии «никогда больше» без проверки железа. Долгое выключение питания само по себе не является объяснением — см. §8 в [SECOND_DISPLAY_ARCHITECTURE.md](SECOND_DISPLAY_ARCHITECTURE.md).
+
+При проблемах — «Troubleshooting» в [AI_CONTEXT.md](AI_CONTEXT.md#troubleshooting-два-oled-дисплея), [README.md](../README.md), [SECOND_DISPLAY_ARCHITECTURE.md](SECOND_DISPLAY_ARCHITECTURE.md) §8–8.6.
 
 ### Порядок запуска (bringup.launch)
 

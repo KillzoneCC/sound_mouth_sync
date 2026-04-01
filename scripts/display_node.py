@@ -1412,6 +1412,33 @@ def main():
 
     rospy.Timer(rospy.Duration(5.0), _oled_retry_tick)
 
+    _mouth_redraw_after = float(
+        rospy.get_param(
+            "~mouth_display_redraw_after_sec",
+            display_cfg.get("mouth_display_redraw_after_sec", 0.0),
+        )
+    )
+    if _mouth_redraw_after > 0 and _LUMA_AVAILABLE:
+
+        def _delayed_mouth_redraw(_evt):
+            if rospy.is_shutdown() or not _mouth_owns_oled():
+                return
+            with display_lock:
+                if device is None:
+                    return
+            rospy.loginfo(
+                "display_node: mouth_display_redraw_after_sec=%.1fs — redrawing mouth OLED",
+                _mouth_redraw_after,
+            )
+            if emotion_mode[0]:
+                _refresh_emotion_face()
+            else:
+                _show_oscillogram([0.0] * W)
+
+        rospy.Timer(
+            rospy.Duration(_mouth_redraw_after), _delayed_mouth_redraw, oneshot=True
+        )
+
     def shutdown_display():
         if not _mouth_owns_oled() or device is None:
             return

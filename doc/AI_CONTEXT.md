@@ -193,6 +193,8 @@ Host:    VLC/aplay → PULSE_SERVER=tcp:127.0.0.1:4713 → (same PulseAudio abov
 
 ## Troubleshooting: два OLED-дисплея
 
+**Решено ли навсегда?** Нет в смысле «больше никогда не повторится без железа»: дубль картинки 0x3C на втором физическом модуле возникает при **одинаковом I2C-адресе** на обоих SSD1306 или при отсутствии ответа на **0x3D**. Обновлённый код и документация добавляют **смягчение** (`AINEX_STATS_PAUSE_ON_3C_UNLESS_3D`, YAML `mouth_display_redraw_after_sec`, …) и **чёткий чеклист**, но не отменяют перемычку **0x3D** на модуле рта. **Долгое выключение** само по себе не объясняет дубль — см. [SECOND_DISPLAY_ARCHITECTURE.md](SECOND_DISPLAY_ARCHITECTURE.md) §8.
+
 Робот использует **два** SSD1306 OLED-дисплея на одной I2C шине (bus 1):
 
 | Адрес | Назначение | Управляющий модуль |
@@ -236,6 +238,11 @@ Host:    VLC/aplay → PULSE_SERVER=tcp:127.0.0.1:4713 → (same PulseAudio abov
    - Причина: два процесса пишут на один I2C адрес.
    - Решение: каждый дисплей должен управляться **одним** процессом. `oled_display.py` пишет только на 0x3C, `display_node.py` — только на 0x3D. Убедитесь, что `oled_i2c_address` в launch = 61 (0x3D).
 
+### Программная подстраховка (дубль адреса / стартовый кадр)
+
+- Env **`AINEX_STATS_PAUSE_ON_3C_UNLESS_3D=1`** для `oled_display.py`: не слать SSID/IP на 0x3C, пока `i2cdetect` не показывает **0x3D** (см. `ainex_bringup/service/oled_display.service`, комментарий в unit).
+- YAML `display.mouth_display_redraw_after_sec` / `reassert_effective_topics_after_sec`: отложенная перерисовка рта и повтор latch `effective_*` (см. README и SECOND_DISPLAY_ARCHITECTURE §8.6). Не заменяют разные I2C-адреса на двух модулях.
+
 ### Проблема: дисплей рта (0x3D) пустой, биометрия (0x3C) работает
 
 1. Проверить, что ROS-нода запущена: `rosnode list | grep mouth_display`
@@ -274,3 +281,6 @@ rostopic echo -n 1 /mouth/current_mode   # Текущий режим рта
 | 2026-03-23 | AI Agent | Dual-display troubleshooting: added comprehensive troubleshooting section for both OLEDs (0x3C biometrics, 0x3D mouth). Changed `bringup.launch` to `wait_standup_timeout_sec=30, proceed_without_standup=true` so displays don't hang forever when ainex_controller is absent. |
 | 2026-03-23 | AI Agent | Fix startup delay: removed `time.sleep(5)` from oled_display.py. Fix oscillogram: audio_capture_node now writes `/etc/asound.conf` routing ALSA default → PulseAudio, so `aplay` and all ALSA apps are captured by oscillogram. Added idle face animations: `resources/idle_faces/` accepts GIF or PNG-sequence folders; random pick on idle-sleep; falls back to built-in sleepy (cigarette+smoke) if empty. YAML: `idle_face_frame_ms`. |
 | 2026-03-31 | AI Agent | Added `emotion_node.py` as a separate emotion storage layer. display_node now subscribes to `/mouth/effective_mode` and `/mouth/effective_emotion`, while external API `/mouth/mode` and `/mouth/emotion` remains unchanged via emotion_node pass-through. |
+| 2026-04-01 | AI Agent | Dual-OLED: `AINEX_STATS_PAUSE_ON_3C_UNLESS_3D` in `ainex_bringup/oled_display.py`; YAML `mouth_display_redraw_after_sec` + `reassert_effective_topics_after_sec`; docs §8.6 / README troubleshooting. |
+| 2026-04-01 | AI Agent | Verification: `catkin build sound_mouth_sync ainex_bringup` OK; runtime on Pi: I2C **3c+3d**, `i2c_address`=61; `paplay` → `current_mode` oscillogram; emotion pub → `happy`. See `docs/PROJECT-CONTRACT.md` § validation 2026-04-01. |
+| 2026-04-01 | AI Agent | Clarified: duplicate-0x3C symptom is **not** guaranteed gone forever; long power-off is **not** root cause; cross-links README / ARCHITECTURE / SECOND_DISPLAY §8 / PROJECT-CONTRACT. |
