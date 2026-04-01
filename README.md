@@ -132,22 +132,50 @@ rostopic pub -1 /mouth/mode std_msgs/String "data: 'oscillogram'"
 rostopic pub -1 /mouth/mode std_msgs/String "data: 'emotion'"
 ```
 
+Имена ниже совпадают с **`EMOTION_CYCLE_SEQUENCE`** в `scripts/mouth_emotion_render.py` (и с демо-кругом). Для ручного вызова **порядок не важен** — публикуйте любую строку, когда режим уже `emotion`.
+
 ```bash
-# Улыбка
-rostopic pub -1 /mouth/emotion std_msgs/String "data: 'happy'"
+# --- тот же порядок, что в круге эмоций (удобно копировать по списку) ---
+# Подписи — ориентир по встроенной векторной отрисовке (mouth_emotion_render.draw_emotion), иначе PNG из resources/emotions/
 
-# Грусть
-rostopic pub -1 /mouth/emotion std_msgs/String "data: 'sad'"
-
-# Удивление
-rostopic pub -1 /mouth/emotion std_msgs/String "data: 'surprised'"
-
-# Нейтральное выражение
+# neutral — нейтрально: прямая линия рта
 rostopic pub -1 /mouth/emotion std_msgs/String "data: 'neutral'"
+# happy — радость: дуга вверх (улыбка)
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'happy'"
+# sad — грусть: дуга вниз (хмурый рот)
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'sad'"
+# angry — злость: в векторе та же прямая линия, что neutral; выразительность даёт angry.png
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'angry'"
+# surprised — удивление: круглый овал «О»
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'surprised'"
+# excited — восторг: дуга вверх (в коде совпадает с happy; отличить можно PNG excited.*)
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'excited'"
+# love — нежность: улыбка чуть приподнята вверх
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'love'"
 
-# Милота (cute) — на дисплее 0x3D: штатно `resources/emotions/cute.png` (128×64, 1-bit);
-# если файла нет, рисуется упрощённый векторный вариант в коде
+# cute — милота: обычно cute.png; без файла — «uwu» глаза и маленький ротик
 rostopic pub -1 /mouth/emotion std_msgs/String "data: 'cute'"
+
+# confused — недоумение: волнистая / зигзаг-линия
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'confused'"
+# scared — страх: круглый рот (овал, похож на surprised)
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'scared'"
+# bored — скука: широкая ровная линия рта (шире, чем у tired)
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'bored'"
+# calm — спокойствие: лёгкая короткая улыбка (дуга поменьше)
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'calm'"
+# disgusted — отвращение: дуга вниз (перекошенная гримаса)
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'disgusted'"
+# tired — усталость: короткий рот чуть ниже + намёк на «тяжёлые» уголки глаз (не путать с bored)
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'tired'"
+
+# sleepy — сонный вид: без sleepy.* — сигарета и дым; с PNG — ваша картинка
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'sleepy'"
+
+# sleep — сон: покадровая анимация sleep_frame* в resources/emotions/ (если есть)
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'sleep'"
+# cat — кошка: покадровая анимация cat_frame* в resources/emotions/ (если есть)
+rostopic pub -1 /mouth/emotion std_msgs/String "data: 'cat'"
 ```
 
 Проверка факта на шине рта:

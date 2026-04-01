@@ -285,3 +285,5 @@ rostopic echo -n 1 /mouth/current_mode   # Текущий режим рта
 | 2026-04-01 | AI Agent | Dual-OLED: `AINEX_STATS_PAUSE_ON_3C_UNLESS_3D` in `ainex_bringup/oled_display.py`; YAML `mouth_display_redraw_after_sec` + `reassert_effective_topics_after_sec`; docs §8.6 / README troubleshooting. |
 | 2026-04-01 | AI Agent | Verification: `catkin build sound_mouth_sync ainex_bringup` OK; runtime on Pi: I2C **3c+3d**, `i2c_address`=61; `paplay` → `current_mode` oscillogram; emotion pub → `happy`. See `docs/PROJECT-CONTRACT.md` § validation 2026-04-01. |
 | 2026-04-01 | AI Agent | Clarified: duplicate-0x3C symptom is **not** guaranteed gone forever; long power-off is **not** root cause; cross-links README / ARCHITECTURE / SECOND_DISPLAY §8 / PROJECT-CONTRACT. |
+| 2026-04-01 | AI Agent | README: ручные `rostopic pub` для всех имён из `EMOTION_CYCLE_SEQUENCE` (angry, excited, love, confused, scared, bored, calm, disgusted, tired, sleepy, sleep, cat и др.), порядок как в `mouth_emotion_render.py`. |
+| 2026-04-01 | AI Agent | `draw_emotion`: разведены векторные **tired** vs **bored** (раньше совпадали — одна и та же короткая линия при типичном `r`). |

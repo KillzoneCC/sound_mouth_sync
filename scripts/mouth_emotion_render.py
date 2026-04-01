@@ -409,8 +409,14 @@ def draw_emotion(emotion, width, height):
     elif emotion == "excited":
         draw.arc((cx - r, cy - r, cx + r, cy + r), 0, 180, fill=255, width=lw)
     elif emotion == "tired":
-        rs = max(4, r // 2)
-        draw.line((cx - rs, cy, cx + rs, cy), fill=255, width=lw)
+        # Короткий приплюснутый рот + лёгкие «мешки»/намёк на веки — не путать с bored (широкая линия).
+        rs_m = max(5, r // 3)
+        lw_t = max(1, lw - 1)
+        my = cy + 2
+        draw.line((cx - rs_m, my, cx + rs_m, my), fill=255, width=lw_t)
+        le = max(4, r // 4)
+        draw.line((cx - r // 2, cy - 10, cx - r // 2 - le, cy - 5), fill=255, width=1)
+        draw.line((cx + r // 2, cy - 10, cx + r // 2 + le, cy - 5), fill=255, width=1)
     elif emotion == "sleepy":
         sx = float(width) / 128.0
         sy = float(height) / 64.0
@@ -478,8 +484,9 @@ def draw_emotion(emotion, width, height):
     elif emotion == "scared":
         draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=255, width=lw)
     elif emotion == "bored":
-        rs = max(6, r // 2)
-        draw.line((cx - rs, cy, cx + rs, cy), fill=255, width=lw)
+        # Широкая ровная линия «скука» — длиннее, чем у tired (короткий рот).
+        rs_b = max(10, (2 * r) // 3)
+        draw.line((cx - rs_b, cy, cx + rs_b, cy), fill=255, width=lw)
     elif emotion == "calm":
         draw.arc((cx - r, cy - r, cx + r, cy + r), 30, 150, fill=255, width=lw)
     elif emotion == "disgusted":
