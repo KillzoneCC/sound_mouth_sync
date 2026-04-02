@@ -32,7 +32,7 @@ oscillograms.
 | File | Role | Key Details |
 |------|------|-------------|
 | `scripts/emotion_node.py` | Node 0: emotion state | Subscribes external `/mouth/mode` + `/mouth/emotion`, stores effective state and republishes latched `/mouth/effective_mode` + `/mouth/effective_emotion`. Optional demo: `~emotion_cycle_enabled` + `~emotion_cycle_interval_sec` — steps through `mouth_emotion_render.EMOTION_CYCLE_SEQUENCE` only while effective mode is `emotion` (oscillogram freezes the index). Stop with Ctrl+C. |
-| `scripts/display_node.py` | Node 1: OLED display | Subscribes effective control topics (`/mouth/effective_mode`, `/mouth/effective_emotion`), plus `/mouth/audio_wave`, `/robot/posture`, `/robot/is_moving`. Publishes `/mouth/current_mode`, `/mouth/current_emotion`. Composes emotion frames via `mouth_emotion_render` and pushes to I2C; draws oscillogram locally. Priority unchanged: fallen → `fall_emotion`; idle timeout → idle pool; auto oscillogram on sound. |
+| `scripts/display_node.py` | Node 1: OLED display | Subscribes effective control topics (`/mouth/effective_mode`, `/mouth/effective_emotion`), plus `/mouth/audio_wave`, `/robot/posture`, `/robot/is_moving`. Publishes `/mouth/current_mode`, `/mouth/current_emotion`. Composes emotion frames via `mouth_emotion_render` and pushes to I2C **at `hardware.i2c_address` (default 0x3D)**; draws oscillogram locally. **Startup (post-standup):** polls `i2cdetect` until mouth address visible or `mouth_oled_startup_delay_sec` elapses; logs **DIAGNOSTIC** if **0x3C** seen but not **0x3D** (typical duplicate strap). Falls back to blind sleep if `i2cdetect` missing. Priority unchanged: fallen → `fall_emotion`; idle timeout → idle pool; auto oscillogram on sound. |
 | `scripts/mouth_emotion_render.py` | Emotion pixel layer | Pillow 1-bit drawing: built-in emotions, custom PNG cache contract, idle folder/GIF, cigarette/cat/yawn builtins, fall angry art. Imported by `display_node` only (no rospy). |
 | `scripts/audio_capture_node.py` | Node 2: audio capture | Starts native PulseAudio, creates ALSA sink for USB card, enables TCP:4713 for host access. Captures via `parec` from `usb_output.monitor`. Publishes `/mouth/audio_wave` (Float32MultiArray, 128 pts) and `/audio/level` (Float32). |
 | `scripts/sms_config.py` | Config module | Loads `config/sound_mouth_sync.yaml` + rosparam overrides. Used by both nodes. |
@@ -116,7 +116,8 @@ sound_mouth_sync:
     wave_width: 128                # oscillogram width
   hardware:
     i2c_port: 1
-    i2c_address: 0x3D              # = 61 decimal
+    i2c_address: 0x3D              # = 61 decimal; must match mouth PCB ADDR strap
+    mouth_oled_startup_delay_sec: 7.0  # max seconds to wait for 0x3D on bus (i2cdetect); raise if cold boot slow
     width: 128
     height: 64
     rotate: 2                      # 0=normal, 2=180° (display mounted upside-down)
@@ -194,7 +195,13 @@ Host:    VLC/aplay → PULSE_SERVER=tcp:127.0.0.1:4713 → (same PulseAudio abov
 
 ## Troubleshooting: два OLED-дисплея
 
-**Решено ли навсегда?** Нет в смысле «больше никогда не повторится без железа»: дубль картинки 0x3C на втором физическом модуле возникает при **одинаковом I2C-адресе** на обоих SSD1306 или при отсутствии ответа на **0x3D**. Обновлённый код и документация добавляют **смягчение** (`AINEX_STATS_PAUSE_ON_3C_UNLESS_3D`, YAML `mouth_display_redraw_after_sec`, …) и **чёткий чеклист**, но не отменяют перемычку **0x3D** на модуле рта. **Долгое выключение** само по себе не объясняет дубль — см. [SECOND_DISPLAY_ARCHITECTURE.md](SECOND_DISPLAY_ARCHITECTURE.md) §8.
+**Решено ли навсегда?** Нет в смысле «больше никогда не повторится без железа»: дубль картинки 0x3C на втором физическом модуле возникает при **одинаковом I2C-адресе** на обоих SSD1306 или при отсутствии ответа на **0x3D**. Обновлённый код и документация добавляют **смягчение** (`AINEX_STATS_PAUSE_ON_3C_UNLESS_3D`, YAML `mouth_display_redraw_after_sec`, …), **опрос шины перед открытием рта** (`mouth_oled_startup_delay_sec` + `i2cdetect`), и **чеклист**, но не отменяют перемычку **0x3D** на модуле рта. **Долгое выключение** само по себе не объясняет дубль — см. [SECOND_DISPLAY_ARCHITECTURE.md](SECOND_DISPLAY_ARCHITECTURE.md) §8.
+
+### Полевой кейс: «вчера ОК, сегодня на рту снова SSID/IP»
+
+- **Причина:** не «ПО перепутало адреса ночью». Статистика **всегда** идёт на **0x3C** из `oled_display.py`. Картинка статуса на физическом модуле рта ⇒ этот модуль получает транзакции **0x3C** ⇒ типично **оба** SSD1306 с перемычкой **0x3C**, либо **0x3D** не отвечает и виден один **0x3C**.
+- **Действия:** `i2cdetect -y 1` (нужны **3c** и **3d**); проверить **ADDR** на плате рта = **0x3D**, кабель/питание; лог `mouth_display_node` на строки **DIAGNOSTIC** / polling; при медленном холодном старте увеличить **`mouth_oled_startup_delay_sec`**; установить **`i2c-tools`** для опроса.
+- **Не путать с аудио:** если `/audio/level` и `/mouth/audio_wave` живы, а на OLED «чужая» картинка — сначала I2C/адреса, не PulseAudio. См. [AUDIO_PLAYBACK.md](AUDIO_PLAYBACK.md#осциллограмма-в-топиках-есть-но-на-экране-рта-не-та-картинка).
 
 Робот использует **два** SSD1306 OLED-дисплея на одной I2C шине (bus 1):
 
@@ -287,3 +294,4 @@ rostopic echo -n 1 /mouth/current_mode   # Текущий режим рта
 | 2026-04-01 | AI Agent | Clarified: duplicate-0x3C symptom is **not** guaranteed gone forever; long power-off is **not** root cause; cross-links README / ARCHITECTURE / SECOND_DISPLAY §8 / PROJECT-CONTRACT. |
 | 2026-04-01 | AI Agent | README: ручные `rostopic pub` для всех имён из `EMOTION_CYCLE_SEQUENCE` (angry, excited, love, confused, scared, bored, calm, disgusted, tired, sleepy, sleep, cat и др.), порядок как в `mouth_emotion_render.py`. |
 | 2026-04-01 | AI Agent | `draw_emotion`: разведены векторные **tired** vs **bored** (раньше совпадали — одна и та же короткая линия при типичном `r`). |
+| 2026-04-02 | AI Agent | Dual-OLED: документация § полевой симптом «вчера ОК / утром SSID на рту»; `display_node` после standup опрашивает `i2cdetect` до появления **0x3D** (лимит `mouth_oled_startup_delay_sec`), лог **DIAGNOSTIC** при «есть 0x3C, нет 0x3D». ARCHITECTURE / SECOND_DISPLAY §8.0–8.7 / README / CONTRACT / AUDIO_PLAYBACK cross-links. |

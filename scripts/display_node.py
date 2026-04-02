@@ -40,7 +40,7 @@ Parameters:
   ~emotion_topic                 emotion source topic (default: /mouth/effective_emotion)
   ~i2c_port                I2C port number (default: 1)
   ~i2c_address             I2C address (default: 0x3D = 61)
-  ~mouth_oled_startup_delay_sec  wait before opening mouth OLED (let 0x3C info display init first)
+  ~mouth_oled_startup_delay_sec  max wait (poll i2cdetect) until mouth ACKs at ~i2c_address; after standup
   ~width                   display width  (default: 128)
   ~height                  display height (default: 64)
 """
@@ -49,6 +49,8 @@ from __future__ import annotations
 import atexit
 import os
 import random
+import re
+import subprocess
 import sys
 import threading
 import time
@@ -146,6 +148,93 @@ def _wait_for_robot_standup(log_prefix="mouth_display_node"):
 DRIVER_TOPIC = "/oled_3d/active_driver"
 DRIVER_MOUTH = "sound_mouth_sync"
 DRIVER_MOTIK = "motik"
+
+
+def _i2c_addr_seen_on_bus(bus_nr: int, addr: int):
+    """
+    True if i2cdetect reports addr on bus_nr; None if i2cdetect missing or failed
+    (same detection idea as ainex_bringup oled_display.py).
+    """
+    try:
+        out = subprocess.check_output(
+            ["i2cdetect", "-y", str(bus_nr)],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=8,
+        )
+    except FileNotFoundError:
+        return None
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    tag = format(addr, "02x").lower()
+    return bool(re.search(r"(?<![0-9a-fA-F])" + re.escape(tag) + r"(?![0-9a-fA-F])", out))
+
+
+def _wait_mouth_oled_on_bus(log_prefix, bus_nr, mouth_addr, max_wait_sec):
+    """
+    Poll the I2C bus until the mouth SSD1306 ACKs at mouth_addr or max_wait_sec elapses.
+
+    After a long power-off, the mouth module sometimes enumerates later than a fixed sleep;
+    opening luma immediately can fail and the user only sees oled_display traffic if the
+    mouth PCB shares 0x3C with the stats OLED (hardware). This does not replace ADDR=0x3D.
+    """
+    if max_wait_sec <= 0:
+        return True
+    t0 = time.time()
+    time.sleep(0.25)
+    first = _i2c_addr_seen_on_bus(bus_nr, mouth_addr)
+    if first is None:
+        rospy.logwarn(
+            "%s: i2cdetect not available — sleeping %.1fs before opening mouth OLED "
+            "(install i2c-tools for I2C probe on cold boot)",
+            log_prefix,
+            max_wait_sec,
+        )
+        rospy.sleep(max_wait_sec)
+        return True
+    if first:
+        rospy.loginfo(
+            "%s: mouth OLED visible at I2C 0x%02X (%.2fs)",
+            log_prefix,
+            mouth_addr,
+            time.time() - t0,
+        )
+        return True
+    rospy.loginfo(
+        "%s: polling bus %d for I2C 0x%02X (max %.1fs, cold/slow power)",
+        log_prefix,
+        bus_nr,
+        mouth_addr,
+        max_wait_sec,
+    )
+    deadline = t0 + max_wait_sec
+    while time.time() < deadline and not rospy.is_shutdown():
+        if _i2c_addr_seen_on_bus(bus_nr, mouth_addr):
+            rospy.loginfo(
+                "%s: mouth OLED at I2C 0x%02X after %.2fs",
+                log_prefix,
+                mouth_addr,
+                time.time() - t0,
+            )
+            return True
+        rospy.sleep(0.3)
+    seen_3c = _i2c_addr_seen_on_bus(bus_nr, 0x3C)
+    seen_3d = _i2c_addr_seen_on_bus(bus_nr, mouth_addr)
+    rospy.logwarn(
+        "%s: timeout waiting for I2C 0x%02X — check cable, power, ADDR strap (mouth must be 0x3D)",
+        log_prefix,
+        mouth_addr,
+    )
+    if seen_3c is True and seen_3d is False:
+        rospy.logerr(
+            "%s: DIAGNOSTIC: 0x3C present, 0x%02X absent. oled_display writes stats only to 0x3C; "
+            "if the mouth panel shows SSID/IP, both SSD1306 modules likely listen on 0x3C — "
+            "set mouth module ADDR to 0x3D and run i2cdetect -y %d (expect 3c and 3d).",
+            log_prefix,
+            mouth_addr,
+            bus_nr,
+        )
+    return False
 
 
 def _normalize_oled_driver(raw):
@@ -326,25 +415,20 @@ def main():
     emotion_pub = rospy.Publisher(
         "/mouth/current_emotion", String, queue_size=1, latch=True)
 
+    if not _wait_for_robot_standup("mouth_display_node"):
+        if rospy.is_shutdown():
+            raise rospy.ROSInterruptException()
+
     mouth_delay = float(
         rospy.get_param(
             "~mouth_oled_startup_delay_sec",
             hw.get("mouth_oled_startup_delay_sec", 7.0),
         )
     )
-    if mouth_delay > 0 and _LUMA_AVAILABLE:
-        rospy.loginfo(
-            "display_node: waiting %.1fs before opening mouth OLED at I2C 0x%02X (info OLED 0x3C first)",
-            mouth_delay,
-            I2C_ADDRESS,
+    if _LUMA_AVAILABLE and I2C_ADDRESS != 0x3C and mouth_delay > 0:
+        _wait_mouth_oled_on_bus(
+            "mouth_display_node", I2C_PORT, I2C_ADDRESS, mouth_delay
         )
-        deadline = time.time() + mouth_delay
-        while time.time() < deadline and not rospy.is_shutdown():
-            rospy.sleep(min(0.2, max(0.0, deadline - time.time())))
-
-    if not _wait_for_robot_standup("mouth_display_node"):
-        if rospy.is_shutdown():
-            raise rospy.ROSInterruptException()
 
     active_driver = [_normalize_oled_driver(rospy.get_param("/oled_3d/active_driver_default", DRIVER_MOUTH))]
     pub_driver = rospy.Publisher(DRIVER_TOPIC, String, queue_size=1, latch=True)
