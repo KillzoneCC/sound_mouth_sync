@@ -42,7 +42,7 @@ oscillograms.
 | `config/sound_mouth_sync.yaml` | Parameters | emotions list, display settings, audio capture settings, hardware (I2C, rotate). |
 | `launch/sound_mouth_sync.launch` | Launch file | Loads config, starts both nodes with args. |
 | `resources/emotions/` | Custom PNGs | 128x64 1-bit. Loaded at node startup. Name = emotion name. |
-| `resources/idle_faces/` | Idle sleep animations | GIF files or folders of numbered PNGs (128x64 1-bit). Random pick on idle-sleep entry. See `resources/idle_faces/README.md`. |
+| `resources/idle_faces/` | Idle sleep animations | GIF files or folders of numbered PNGs (128x64 1-bit). Random pick on idle-sleep entry. See package [README.md](../README.md#resources-mouth-display). |
 | `README.md` | User docs | Examples, installation, parameters, troubleshooting. |
 | `doc/ARCHITECTURE.md` | Architecture | Mermaid diagrams, node descriptions, data flow. |
 | `doc/AI_CONTEXT.md` | This file | AI agent rules, full context. |

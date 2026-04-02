@@ -213,8 +213,8 @@ sound_mouth_sync/
 │   ├── audio_diag.sh              # Audio diagnostics script
 │   └── setup_host_audio.sh        # Host → Docker audio redirect setup
 ├── resources/
-│   ├── emotions/                  # Custom emotion PNGs (128x64, 1-bit)
-│   └── README_EMOTIONS.md         # Guide for custom emotions
+│   ├── emotions/                  # Custom emotion PNGs (128x64, 1-bit) — см. README.md → «Ресурсы для экрана рта»
+│   └── idle_faces/                # Idle-sleep GIF / PNG sequences — см. README.md → «Ресурсы для экрана рта»
 ├── doc/
 │   ├── ARCHITECTURE.md            # This file
 │   ├── AI_CONTEXT.md              # Context for AI developers
