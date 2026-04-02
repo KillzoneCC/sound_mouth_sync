@@ -250,7 +250,9 @@ I2C bus 1
 └── 0x3D  ← sound_mouth_sync/display_node.py (рот: эмоции через mouth_emotion_render + осциллограмма в display_node)
 ```
 
-Адрес **0x3D** на модуле рта задаётся **железом** (перемычка ADDR на плате SSD1306). В `config/sound_mouth_sync.yaml` → `hardware.i2c_address` должно совпадать с этой перемычкой (по умолчанию `0x3D`). Два независимых изображения на одной шине **невозможны**, если оба чипа слушают один адрес.
+Адрес **0x3D** на модуле рта задаётся **железом**: на платах SSD1306 часто выведена зона **IIC ADDRESS SELECT** — два варианта пайки **SMD-резистора** (перемычки). На шёлке печатной платы могут быть подписи **0x78** и **0x7A**: это **8-битные** обозначения (как в некоторых даташитах, с учётом бита R/W). Соответствие **7-bit** адресу на шине: **0x78 → 0x3C**, **0x7A → 0x3D**. По умолчанию у модуля часто стоит позиция **0x78 (0x3C)** — для **рта** резистор переносят на **0x7A**, чтобы на `i2cdetect` появилась отдельная строка **3d**. В `config/sound_mouth_sync.yaml` → `hardware.i2c_address` и `oled_i2c_address` в launch должны **совпадать** с выбранной позицией (для рта — **0x3D**). Иллюстрация: `doc/images/oled_i2c_address_select_example.png`. Как внести это в Visio: [VISIO_SCHEME_OLED_JUMPER.md](VISIO_SCHEME_OLED_JUMPER.md).
+
+Два независимых изображения на одной шине **невозможны**, если оба чипа слушают один адрес.
 
 `oled_display.py` пишет только на **0x3C**; `display_node.py` — на адрес из конфига (**0x3D**). Опционально: env **`AINEX_STATS_PAUSE_ON_3C_UNLESS_3D`** — не обновлять статус на 0x3C, пока на шине не виден рот на **0x3D** (подробности в [SECOND_DISPLAY_ARCHITECTURE.md](SECOND_DISPLAY_ARCHITECTURE.md), §8.6). Параметры **`mouth_display_redraw_after_sec`** / **`reassert_effective_topics_after_sec`** в YAML (`display`) — мягкая подстраховка после старта.
 

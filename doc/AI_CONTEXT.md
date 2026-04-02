@@ -174,8 +174,9 @@ Host:    VLC/aplay → PULSE_SERVER=tcp:127.0.0.1:4713 → (same PulseAudio abov
 
 ## Hardware
 
-- Display: SSD1306 OLED, 128x64 pixels, monochrome, I2C bus 1, address 0x3D, mounted upside-down (rotate=2)
-- Audio: GeneralPlus USB Audio Device (card 2), single speaker, USB path 1-1.4
+- Display (mouth): SSD1306 OLED, 128x64 pixels, monochrome, I2C bus 1, **7-bit address 0x3D** for the mouth module, mounted upside-down (rotate=2). Physical address is set by **IIC ADDRESS SELECT** on the PCB (SMD resistor/jumper): silkscreen **0x78** ⇒ **0x3C**, **0x7A** ⇒ **0x3D**. Default module setting is often 0x3C — the **mouth** board must be strapped to **0x3D** (0x7A position) so `display_node` matches `hardware.i2c_address`. Photo: `doc/images/oled_i2c_address_select_example.png`. Visio diagram note: [VISIO_SCHEME_OLED_JUMPER.md](VISIO_SCHEME_OLED_JUMPER.md).
+- Display (system status): separate SSD1306 at **0x3C** — see `ainex_bringup` `oled_display.py`.
+- Audio: GeneralPlus USB Audio Device (card 2), single speaker, USB path 1-1.4 (typical lab description)
 - Platform: Raspberry Pi 5, Ubuntu 20.04, ROS Noetic
 
 ## Dependencies
@@ -295,3 +296,4 @@ rostopic echo -n 1 /mouth/current_mode   # Текущий режим рта
 | 2026-04-01 | AI Agent | README: ручные `rostopic pub` для всех имён из `EMOTION_CYCLE_SEQUENCE` (angry, excited, love, confused, scared, bored, calm, disgusted, tired, sleepy, sleep, cat и др.), порядок как в `mouth_emotion_render.py`. |
 | 2026-04-01 | AI Agent | `draw_emotion`: разведены векторные **tired** vs **bored** (раньше совпадали — одна и та же короткая линия при типичном `r`). |
 | 2026-04-02 | AI Agent | Dual-OLED: документация § полевой симптом «вчера ОК / утром SSID на рту»; `display_node` после standup опрашивает `i2cdetect` до появления **0x3D** (лимит `mouth_oled_startup_delay_sec`), лог **DIAGNOSTIC** при «есть 0x3C, нет 0x3D». ARCHITECTURE / SECOND_DISPLAY §8.0–8.7 / README / CONTRACT / AUDIO_PLAYBACK cross-links. |
+| 2026-04-02 | AI Agent | Hardware doc: **IIC ADDRESS SELECT** (PCB 0x78/0x7A ↔ 7-bit 0x3C/0x3D), `doc/images/oled_i2c_address_select_example.png`, `VISIO_SCHEME_OLED_JUMPER.md`; README structure table; README_EMOTIONS + idle_faces README cross-links. |
