@@ -31,8 +31,10 @@ oscillograms.
 
 | File | Role | Key Details |
 |------|------|-------------|
-| `scripts/emotion_node.py` | Node 0: emotion state | Subscribes external `/mouth/mode` + `/mouth/emotion`, stores effective state and republishes latched `/mouth/effective_mode` + `/mouth/effective_emotion`. Keeps external API stable while decoupling emotion storage from display rendering. |
-| `scripts/display_node.py` | Node 1: OLED display | Subscribes effective control topics (`/mouth/effective_mode`, `/mouth/effective_emotion`), plus `/mouth/audio_wave`, `/robot/posture`, `/robot/is_moving`. Publishes `/mouth/current_mode`, `/mouth/current_emotion`. Priority: fallen → `fall_emotion`; idle timeout → `idle_sleep_emotion`; else effective emotion + oscillogram. `sleepy` without `sleepy.png`: animated cigarette + smoke. Fall `angry` without `angry.png`: vector mouth + scratch. |
+| `scripts/emotion_node.py` | Node 0: emotion state | Subscribes external `/mouth/mode` + `/mouth/emotion`, stores effective state and republishes latched `/mouth/effective_mode` + `/mouth/effective_emotion`. Optional demo: `~emotion_cycle_enabled` + `~emotion_cycle_interval_sec` — steps through `mouth_emotion_render.EMOTION_CYCLE_SEQUENCE` only while effective mode is `emotion` (oscillogram freezes the index). Stop with Ctrl+C. |
+| `scripts/display_node.py` | Node 1: OLED display | Subscribes `effective_*`, `/mouth/audio_wave`, `/audio/level`, `/robot/posture`, `/robot/is_moving`, `/oled_3d/active_driver`. Publishes `/mouth/current_*`. I2C via `luma.oled`; emotion frames `mouth_emotion_render`; oscillogram line `mouth_display_helpers.draw_oscillogram_waveform`. Startup I2C poll and standup wait live in `mouth_display_helpers`. Priorities unchanged: fall → `fall_emotion`; idle pool; auto oscillogram. |
+| `scripts/mouth_display_helpers.py` | display_node support (not a node) | `wait_for_robot_standup`, `wait_mouth_oled_on_bus` / `i2cdetect` + DIAGNOSTIC text, `draw_oscillogram_waveform`, `preload_emotion_assets`, `normalize_oled_driver` / `DRIVER_*`, `make_norm_emotion`, `resolve_idle_sleep_emotion_pool`. |
+| `scripts/mouth_emotion_render.py` | Emotion pixel layer | Pillow 1-bit drawing: built-in emotions, custom PNG cache contract, idle folder/GIF, cigarette/cat/yawn builtins, fall angry art. Imported by `display_node` only (no rospy). |
 | `scripts/audio_capture_node.py` | Node 2: audio capture | Starts native PulseAudio, creates ALSA sink for USB card, enables TCP:4713 for host access. Captures via `parec` from `usb_output.monitor`. Publishes `/mouth/audio_wave` (Float32MultiArray, 128 pts) and `/audio/level` (Float32). |
 | `scripts/sms_config.py` | Config module | Loads `config/sound_mouth_sync.yaml` + rosparam overrides. Used by both nodes. |
 | `scripts/usb_audio_reset.sh` | USB audio reset | Resets USB audio device via sysfs `authorized` toggle. Run with sudo after reboot if card not detected. |
@@ -41,7 +43,7 @@ oscillograms.
 | `config/sound_mouth_sync.yaml` | Parameters | emotions list, display settings, audio capture settings, hardware (I2C, rotate). |
 | `launch/sound_mouth_sync.launch` | Launch file | Loads config, starts both nodes with args. |
 | `resources/emotions/` | Custom PNGs | 128x64 1-bit. Loaded at node startup. Name = emotion name. |
-| `resources/idle_faces/` | Idle sleep animations | GIF files or folders of numbered PNGs (128x64 1-bit). Random pick on idle-sleep entry. See `resources/idle_faces/README.md`. |
+| `resources/idle_faces/` | Idle sleep animations | GIF files or folders of numbered PNGs (128x64 1-bit). Random pick on idle-sleep entry. See package [README.md](../README.md#resources-mouth-display). |
 | `README.md` | User docs | Examples, installation, parameters, troubleshooting. |
 | `doc/ARCHITECTURE.md` | Architecture | Mermaid diagrams, node descriptions, data flow. |
 | `doc/AI_CONTEXT.md` | This file | AI agent rules, full context. |
@@ -95,8 +97,8 @@ All under namespace `/sound_mouth_sync/`:
 ```yaml
 sound_mouth_sync:
   emotions:
-    list: [neutral, happy, sad, angry, surprised, excited, sleepy, love,
-           confused, scared, bored, calm, disgusted, tired]
+    list: [neutral, happy, sad, angry, surprised, excited, sleepy, sleep, love,
+           cute, confused, scared, bored, calm, disgusted, tired, cat]
     default_emotion: neutral
   display:
     default_emotion: neutral
@@ -115,7 +117,8 @@ sound_mouth_sync:
     wave_width: 128                # oscillogram width
   hardware:
     i2c_port: 1
-    i2c_address: 0x3D              # = 61 decimal
+    i2c_address: 0x3D              # = 61 decimal; must match mouth PCB ADDR strap
+    mouth_oled_startup_delay_sec: 7.0  # max seconds to wait for 0x3D on bus (i2cdetect); raise if cold boot slow
     width: 128
     height: 64
     rotate: 2                      # 0=normal, 2=180° (display mounted upside-down)
@@ -123,10 +126,10 @@ sound_mouth_sync:
 
 ## Valid Emotions (built-in)
 
-`neutral`, `happy`, `sad`, `angry`, `surprised`, `excited`, `sleepy`, `love`,
-`confused`, `scared`, `bored`, `calm`, `disgusted`, `tired`
+`neutral`, `happy`, `sad`, `angry`, `surprised`, `excited`, `sleepy`, `sleep`,
+`love`, `cute`, `confused`, `scared`, `bored`, `calm`, `disgusted`, `tired`, `cat`
 
-Custom emotions: place PNG in `resources/emotions/<name>.png`.
+Custom / asset emotions: PNG in `resources/emotions/<name>.png` (e.g. `cute.png`, `cat_frame0.png`).
 
 ## Auto-mode Behaviour
 
@@ -172,8 +175,9 @@ Host:    VLC/aplay → PULSE_SERVER=tcp:127.0.0.1:4713 → (same PulseAudio abov
 
 ## Hardware
 
-- Display: SSD1306 OLED, 128x64 pixels, monochrome, I2C bus 1, address 0x3D, mounted upside-down (rotate=2)
-- Audio: GeneralPlus USB Audio Device (card 2), single speaker, USB path 1-1.4
+- Display (mouth): SSD1306 OLED, 128x64 pixels, monochrome, I2C bus 1, **7-bit address 0x3D** for the mouth module, mounted upside-down (rotate=2). Physical address is set by **IIC ADDRESS SELECT** on the PCB (SMD resistor/jumper): silkscreen **0x78** ⇒ **0x3C**, **0x7A** ⇒ **0x3D**. Default module setting is often 0x3C — the **mouth** board must be strapped to **0x3D** (0x7A position) so `display_node` matches `hardware.i2c_address`. Photo: `doc/images/oled_i2c_address_select_example.png`. Visio diagram note: [VISIO_SCHEME_OLED_JUMPER.md](VISIO_SCHEME_OLED_JUMPER.md).
+- Display (system status): separate SSD1306 at **0x3C** — see `ainex_bringup` `oled_display.py`.
+- Audio: GeneralPlus USB Audio Device (card 2), single speaker, USB path 1-1.4 (typical lab description)
 - Platform: Raspberry Pi 5, Ubuntu 20.04, ROS Noetic
 
 ## Dependencies
@@ -192,6 +196,14 @@ Host:    VLC/aplay → PULSE_SERVER=tcp:127.0.0.1:4713 → (same PulseAudio abov
 - `/etc/pulse/client.conf` may become stale after reboot if written by a different uid. `audio_capture_node` now auto-detects and removes stale configs before starting PulseAudio.
 
 ## Troubleshooting: два OLED-дисплея
+
+**Решено ли навсегда?** Нет в смысле «больше никогда не повторится без железа»: дубль картинки 0x3C на втором физическом модуле возникает при **одинаковом I2C-адресе** на обоих SSD1306 или при отсутствии ответа на **0x3D**. Обновлённый код и документация добавляют **смягчение** (`AINEX_STATS_PAUSE_ON_3C_UNLESS_3D`, YAML `mouth_display_redraw_after_sec`, …), **опрос шины перед открытием рта** (`mouth_oled_startup_delay_sec` + `i2cdetect`), и **чеклист**, но не отменяют перемычку **0x3D** на модуле рта. **Долгое выключение** само по себе не объясняет дубль — см. [SECOND_DISPLAY_ARCHITECTURE.md](SECOND_DISPLAY_ARCHITECTURE.md) §8.
+
+### Полевой кейс: «вчера ОК, сегодня на рту снова SSID/IP»
+
+- **Причина:** не «ПО перепутало адреса ночью». Статистика **всегда** идёт на **0x3C** из `oled_display.py`. Картинка статуса на физическом модуле рта ⇒ этот модуль получает транзакции **0x3C** ⇒ типично **оба** SSD1306 с перемычкой **0x3C**, либо **0x3D** не отвечает и виден один **0x3C**.
+- **Действия:** `i2cdetect -y 1` (нужны **3c** и **3d**); проверить **ADDR** на плате рта = **0x3D**, кабель/питание; лог `mouth_display_node` на строки **DIAGNOSTIC** / polling; при медленном холодном старте увеличить **`mouth_oled_startup_delay_sec`**; установить **`i2c-tools`** для опроса.
+- **Не путать с аудио:** если `/audio/level` и `/mouth/audio_wave` живы, а на OLED «чужая» картинка — сначала I2C/адреса, не PulseAudio. См. [AUDIO_PLAYBACK.md](AUDIO_PLAYBACK.md#осциллограмма-в-топиках-есть-но-на-экране-рта-не-та-картинка).
 
 Робот использует **два** SSD1306 OLED-дисплея на одной I2C шине (bus 1):
 
@@ -236,6 +248,11 @@ Host:    VLC/aplay → PULSE_SERVER=tcp:127.0.0.1:4713 → (same PulseAudio abov
    - Причина: два процесса пишут на один I2C адрес.
    - Решение: каждый дисплей должен управляться **одним** процессом. `oled_display.py` пишет только на 0x3C, `display_node.py` — только на 0x3D. Убедитесь, что `oled_i2c_address` в launch = 61 (0x3D).
 
+### Программная подстраховка (дубль адреса / стартовый кадр)
+
+- Env **`AINEX_STATS_PAUSE_ON_3C_UNLESS_3D=1`** для `oled_display.py`: не слать SSID/IP на 0x3C, пока `i2cdetect` не показывает **0x3D** (см. `ainex_bringup/service/oled_display.service`, комментарий в unit).
+- YAML `display.mouth_display_redraw_after_sec` / `reassert_effective_topics_after_sec`: отложенная перерисовка рта и повтор latch `effective_*` (см. README и SECOND_DISPLAY_ARCHITECTURE §8.6). Не заменяют разные I2C-адреса на двух модулях.
+
 ### Проблема: дисплей рта (0x3D) пустой, биометрия (0x3C) работает
 
 1. Проверить, что ROS-нода запущена: `rosnode list | grep mouth_display`
@@ -274,3 +291,11 @@ rostopic echo -n 1 /mouth/current_mode   # Текущий режим рта
 | 2026-03-23 | AI Agent | Dual-display troubleshooting: added comprehensive troubleshooting section for both OLEDs (0x3C biometrics, 0x3D mouth). Changed `bringup.launch` to `wait_standup_timeout_sec=30, proceed_without_standup=true` so displays don't hang forever when ainex_controller is absent. |
 | 2026-03-23 | AI Agent | Fix startup delay: removed `time.sleep(5)` from oled_display.py. Fix oscillogram: audio_capture_node now writes `/etc/asound.conf` routing ALSA default → PulseAudio, so `aplay` and all ALSA apps are captured by oscillogram. Added idle face animations: `resources/idle_faces/` accepts GIF or PNG-sequence folders; random pick on idle-sleep; falls back to built-in sleepy (cigarette+smoke) if empty. YAML: `idle_face_frame_ms`. |
 | 2026-03-31 | AI Agent | Added `emotion_node.py` as a separate emotion storage layer. display_node now subscribes to `/mouth/effective_mode` and `/mouth/effective_emotion`, while external API `/mouth/mode` and `/mouth/emotion` remains unchanged via emotion_node pass-through. |
+| 2026-04-01 | AI Agent | Dual-OLED: `AINEX_STATS_PAUSE_ON_3C_UNLESS_3D` in `ainex_bringup/oled_display.py`; YAML `mouth_display_redraw_after_sec` + `reassert_effective_topics_after_sec`; docs §8.6 / README troubleshooting. |
+| 2026-04-01 | AI Agent | Verification: `catkin build sound_mouth_sync ainex_bringup` OK; runtime on Pi: I2C **3c+3d**, `i2c_address`=61; `paplay` → `current_mode` oscillogram; emotion pub → `happy`. See `docs/PROJECT-CONTRACT.md` § validation 2026-04-01. |
+| 2026-04-01 | AI Agent | Clarified: duplicate-0x3C symptom is **not** guaranteed gone forever; long power-off is **not** root cause; cross-links README / ARCHITECTURE / SECOND_DISPLAY §8 / PROJECT-CONTRACT. |
+| 2026-04-01 | AI Agent | README: ручные `rostopic pub` для всех имён из `EMOTION_CYCLE_SEQUENCE` (angry, excited, love, confused, scared, bored, calm, disgusted, tired, sleepy, sleep, cat и др.), порядок как в `mouth_emotion_render.py`. |
+| 2026-04-01 | AI Agent | `draw_emotion`: разведены векторные **tired** vs **bored** (раньше совпадали — одна и та же короткая линия при типичном `r`). |
+| 2026-04-02 | AI Agent | Dual-OLED: документация § полевой симптом «вчера ОК / утром SSID на рту»; `display_node` после standup опрашивает `i2cdetect` до появления **0x3D** (лимит `mouth_oled_startup_delay_sec`), лог **DIAGNOSTIC** при «есть 0x3C, нет 0x3D». ARCHITECTURE / SECOND_DISPLAY §8.0–8.7 / README / CONTRACT / AUDIO_PLAYBACK cross-links. |
+| 2026-04-02 | AI Agent | Hardware doc: **IIC ADDRESS SELECT** (PCB 0x78/0x7A ↔ 7-bit 0x3C/0x3D), `doc/images/oled_i2c_address_select_example.png`, `VISIO_SCHEME_OLED_JUMPER.md`; README structure table; README_EMOTIONS + idle_faces README cross-links. |
+| 2026-04-07 | AI Agent | Refactor: `mouth_display_helpers.py` extracted from `display_node.py` (standup, I2C poll, oscillogram draw, asset preload, driver strings, idle pool); unified animation timer callback factory; behaviour and topics unchanged. |

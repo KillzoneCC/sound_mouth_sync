@@ -11,7 +11,8 @@ catkin_install_python(PROGRAMS
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
-install(FILES scripts/sms_config.py scripts/mouth_audio_gates.py
+install(FILES scripts/sms_config.py scripts/mouth_audio_gates.py scripts/mouth_emotion_render.py
+  scripts/mouth_display_helpers.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
