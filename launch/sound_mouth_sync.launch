@@ -38,6 +38,7 @@
   <arg name="idle_sleep_sec" default="120.0" doc="Seconds without motion+speech before idle sleep (2 min)"/>
   <arg name="idle_require_movement_signal" default="false" doc="Require /robot/is_moving before allowing idle sleep (false = works without joystick_controller)"/>
   <arg name="mouth_oled_startup_delay_sec" default="7.0" doc="Delay before opening I2C 0x3D (after 0x3C info OLED)"/>
+  <!-- mouth_display_redraw_after_sec, reassert_effective_topics_after_sec: см. sound_mouth_sync.yaml → display -->
 
   <!-- Audio capture args -->
   <arg name="rate" default="48000" doc="Sample rate Hz (48000 = native USB card rate)"/>

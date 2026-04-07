@@ -78,7 +78,7 @@ def get_emotions_config():
     return _get_section("emotions", {
         "list": [
             "neutral", "happy", "sad", "angry", "surprised", "excited",
-            "sleepy", "sleep", "love", "confused", "scared", "bored", "calm",
+            "sleepy", "sleep", "love", "cute", "confused", "scared", "bored", "calm",
             "disgusted", "tired", "cat",
         ],
         "default_emotion": "neutral",
@@ -100,6 +100,8 @@ def get_display_settings():
         "movement_topic": "/robot/is_moving",
         "idle_require_movement_signal": True,
         "audio_level_topic": "/audio/level",
+        "mouth_display_redraw_after_sec": 0.0,
+        "reassert_effective_topics_after_sec": 0.0,
     })
 
 

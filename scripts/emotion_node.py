@@ -3,6 +3,9 @@
 """
 emotion_node — stores and republishes effective mouth emotion/mode.
 
+Pixel drawing for emotions lives in mouth_emotion_render.py; display_node imports
+that module to push frames to the OLED. This node does not render pixels.
+
 Goal:
   Keep external API stable (/mouth/mode, /mouth/emotion) while decoupling
   emotion command storage from display_node.
@@ -14,6 +17,17 @@ Input topics (external API, unchanged):
 Output topics (internal effective state):
   /mouth/effective_mode
   /mouth/effective_emotion
+
+Optional demo (parameters):
+  ~emotion_cycle_enabled   if true, cyclically republish /mouth/effective_emotion
+                            using mouth_emotion_render.EMOTION_CYCLE_SEQUENCE
+  ~emotion_cycle_interval_sec  seconds between steps (default 3.0)
+
+  The cycle advances only while effective mode is "emotion" (oscillogram pauses
+  the loop without advancing the index). When the cycle is enabled, the node
+  forces initial /mouth/effective_mode to "emotion" so one terminal is enough.
+
+  Stop with Ctrl+C like any ROS node.
 """
 from __future__ import annotations
 
@@ -35,6 +49,7 @@ _script_dir = os.path.dirname(os.path.abspath(__file__))
 if _script_dir not in sys.path:
     sys.path.insert(0, _script_dir)
 
+import mouth_emotion_render as mer
 import sms_config
 
 
@@ -68,6 +83,9 @@ def main():
     default_mode = _normalize_mode(default_mode, "oscillogram")
     default_emotion = _normalize_emotion(default_emotion, "neutral")
 
+    emotion_cycle_enabled = bool(
+        rospy.get_param("~emotion_cycle_enabled", False))
+
     in_mode_topic = rospy.get_param("~input_mode_topic", "/mouth/mode")
     in_emotion_topic = rospy.get_param("~input_emotion_topic", "/mouth/emotion")
     out_mode_topic = rospy.get_param("~output_mode_topic", "/mouth/effective_mode")
@@ -75,6 +93,8 @@ def main():
 
     current_mode = [default_mode]
     current_emotion = [default_emotion]
+    if emotion_cycle_enabled:
+        current_mode[0] = "emotion"
 
     mode_pub = rospy.Publisher(out_mode_topic, String, queue_size=1, latch=True)
     emotion_pub = rospy.Publisher(out_emotion_topic, String, queue_size=1, latch=True)
@@ -99,6 +119,65 @@ def main():
     rospy.Subscriber(in_emotion_topic, String, on_emotion, queue_size=1)
 
     publish_all()
+
+    emotion_cycle_interval_sec = float(
+        rospy.get_param("~emotion_cycle_interval_sec", 3.0))
+    emotion_cycle_interval_sec = max(0.3, emotion_cycle_interval_sec)
+
+    if emotion_cycle_enabled:
+        sequence = tuple(mer.EMOTION_CYCLE_SEQUENCE)
+        if not sequence:
+            rospy.logwarn("emotion_node: EMOTION_CYCLE_SEQUENCE empty, cycle disabled")
+        else:
+            bad = [x for x in sequence if x not in mer.VALID_EMOTIONS]
+            if bad:
+                rospy.logwarn(
+                    "emotion_node: EMOTION_CYCLE_SEQUENCE has invalid ids %s (skipped entries)",
+                    bad,
+                )
+            sequence = tuple(x for x in sequence if x in mer.VALID_EMOTIONS)
+        if emotion_cycle_enabled and sequence:
+            cycle_idx = [0]
+            if default_emotion in sequence:
+                cycle_idx[0] = sequence.index(default_emotion)
+
+            def _cycle_tick(_evt):
+                if current_mode[0] != "emotion":
+                    return
+                cycle_idx[0] = (cycle_idx[0] + 1) % len(sequence)
+                current_emotion[0] = sequence[cycle_idx[0]]
+                emotion_pub.publish(String(data=current_emotion[0]))
+                rospy.loginfo("emotion_node: cycle %d/%d -> %s",
+                              cycle_idx[0] + 1, len(sequence), current_emotion[0])
+
+            rospy.Timer(rospy.Duration(emotion_cycle_interval_sec), _cycle_tick)
+            rospy.loginfo(
+                "emotion_node: emotion cycle ON (interval=%.1fs, %d steps); "
+                "only runs in mode=emotion; Ctrl+C to exit",
+                emotion_cycle_interval_sec,
+                len(sequence),
+            )
+        elif emotion_cycle_enabled:
+            rospy.logwarn(
+                "emotion_node: emotion cycle requested but sequence is empty after validation")
+
+    reassert_sec = float(
+        rospy.get_param(
+            "~reassert_effective_topics_after_sec",
+            display_cfg.get("reassert_effective_topics_after_sec", 0.0),
+        )
+    )
+    if reassert_sec > 0:
+
+        def _reassert_effective(_evt):
+            publish_all()
+            rospy.loginfo(
+                "emotion_node: reasserted effective mode/emotion after %.1fs",
+                reassert_sec,
+            )
+
+        rospy.Timer(rospy.Duration(reassert_sec), _reassert_effective, oneshot=True)
+
     rospy.loginfo(
         "emotion_node started: in(mode=%s, emotion=%s) -> out(mode=%s, emotion=%s), defaults: mode=%s emotion=%s",
         in_mode_topic,
