@@ -5,7 +5,7 @@ display_node — manages the OLED SSD1306 128x64 (I2C 0x3D) mounted on the robot
 head (mouth area). Two display modes:
 
   emotion      — mouth expression frames from mouth_emotion_render (PIL 1-bit), composed here for I2C
-  oscillogram  — real-time audio waveform received from audio_capture_node (drawn only in this file)
+  oscillogram  — real-time audio waveform received from audio_capture_node (drawn via mouth_display_helpers)
 
 Subscriptions:
   /mouth/effective_mode    (String)            "emotion" | "oscillogram"
@@ -49,8 +49,6 @@ from __future__ import annotations
 import atexit
 import os
 import random
-import re
-import subprocess
 import sys
 import threading
 import time
@@ -60,16 +58,17 @@ from std_msgs.msg import String, Float32MultiArray, Bool, Float32
 
 try:
     import rospkg
+
     _pkg_path = rospkg.RosPack().get_path("sound_mouth_sync")
     sys.path.insert(0, os.path.join(_pkg_path, "scripts"))
 except Exception:
     pass
-# Always include this file's directory (devel/install: deps next to the node script).
 _script_dir = os.path.dirname(os.path.abspath(__file__))
 if _script_dir not in sys.path:
     sys.path.insert(0, _script_dir)
 
 import mouth_audio_gates as _mouth_audio_gates
+import mouth_display_helpers as mdh
 import mouth_emotion_render as mer
 import sms_config
 
@@ -77,6 +76,7 @@ try:
     from luma.core.interface.serial import i2c
     from luma.oled.device import ssd1306
     from PIL import Image, ImageDraw, ImageFont
+
     _LUMA_AVAILABLE = True
 except ImportError:
     _LUMA_AVAILABLE = False
@@ -84,166 +84,6 @@ except ImportError:
     ssd1306 = None
     Image = None
     ImageDraw = None
-
-# Emotion pixel art lives in mouth_emotion_render (no rospy). Oscillogram stays here.
-
-def _draw_oscillogram_waveform(y_values, width, height):
-    """Draw an oscillogram line from W values in -1..1."""
-    img = Image.new("1", (width, height), 0)
-    draw = ImageDraw.Draw(img)
-    cy = height // 2
-    n = min(len(y_values), width)
-    if n < 2:
-        return img
-    pts = []
-    for i in range(n):
-        y = y_values[i]
-        y_px = cy + int(y * (cy - 1))
-        y_px = max(0, min(height - 1, y_px))
-        pts.append((i, y_px))
-    for j in range(len(pts) - 1):
-        draw.line([pts[j], pts[j + 1]], fill=255, width=1)
-    return img
-
-
-def _wait_for_robot_standup(log_prefix="mouth_display_node"):
-    """
-    Ждём init_pose/init_finish=True (ainex_controller) до открытия I2C OLED.
-
-    ~wait_standup_timeout_sec: 0 = без лимита; >0 — секунды.
-    ~proceed_without_standup: при таймауте >0 — true = продолжить без подъёма.
-    """
-    timeout = float(rospy.get_param("~wait_standup_timeout_sec", 0.0))
-    _proceed = rospy.get_param("~proceed_without_standup", False)
-    proceed = (
-        _proceed is True
-        or (isinstance(_proceed, str) and _proceed.strip().lower() in ("true", "1", "yes"))
-    )
-    start = time.time()
-    while not rospy.is_shutdown():
-        if rospy.get_param("init_pose/init_finish", False):
-            rospy.loginfo("%s: робот встал (init_pose/init_finish), открываем OLED", log_prefix)
-            return True
-        if timeout > 0.0 and (time.time() - start) > timeout:
-            if proceed:
-                rospy.logwarn(
-                    "%s: таймаут ожидания подъёма (%.0f с), proceed_without_standup=true",
-                    log_prefix,
-                    timeout,
-                )
-                return False
-            rospy.logerr(
-                "%s: таймаут init_pose/init_finish (%.0f с). Стенд: wait_standup_timeout_sec>0 "
-                "и proceed_without_standup:=true",
-                log_prefix,
-                timeout,
-            )
-            rospy.signal_shutdown("standup timeout (init_pose/init_finish)")
-            raise rospy.ROSInterruptException()
-        time.sleep(0.5)
-    return False
-
-
-# Переключение владельца OLED 0x3D с пакетом motik (без одновременного I2C).
-DRIVER_TOPIC = "/oled_3d/active_driver"
-DRIVER_MOUTH = "sound_mouth_sync"
-DRIVER_MOTIK = "motik"
-
-
-def _i2c_addr_seen_on_bus(bus_nr: int, addr: int):
-    """
-    True if i2cdetect reports addr on bus_nr; None if i2cdetect missing or failed
-    (same detection idea as ainex_bringup oled_display.py).
-    """
-    try:
-        out = subprocess.check_output(
-            ["i2cdetect", "-y", str(bus_nr)],
-            text=True,
-            stderr=subprocess.DEVNULL,
-            timeout=8,
-        )
-    except FileNotFoundError:
-        return None
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        return None
-    tag = format(addr, "02x").lower()
-    return bool(re.search(r"(?<![0-9a-fA-F])" + re.escape(tag) + r"(?![0-9a-fA-F])", out))
-
-
-def _wait_mouth_oled_on_bus(log_prefix, bus_nr, mouth_addr, max_wait_sec):
-    """
-    Poll the I2C bus until the mouth SSD1306 ACKs at mouth_addr or max_wait_sec elapses.
-
-    After a long power-off, the mouth module sometimes enumerates later than a fixed sleep;
-    opening luma immediately can fail and the user only sees oled_display traffic if the
-    mouth PCB shares 0x3C with the stats OLED (hardware). This does not replace ADDR=0x3D.
-    """
-    if max_wait_sec <= 0:
-        return True
-    t0 = time.time()
-    time.sleep(0.25)
-    first = _i2c_addr_seen_on_bus(bus_nr, mouth_addr)
-    if first is None:
-        rospy.logwarn(
-            "%s: i2cdetect not available — sleeping %.1fs before opening mouth OLED "
-            "(install i2c-tools for I2C probe on cold boot)",
-            log_prefix,
-            max_wait_sec,
-        )
-        rospy.sleep(max_wait_sec)
-        return True
-    if first:
-        rospy.loginfo(
-            "%s: mouth OLED visible at I2C 0x%02X (%.2fs)",
-            log_prefix,
-            mouth_addr,
-            time.time() - t0,
-        )
-        return True
-    rospy.loginfo(
-        "%s: polling bus %d for I2C 0x%02X (max %.1fs, cold/slow power)",
-        log_prefix,
-        bus_nr,
-        mouth_addr,
-        max_wait_sec,
-    )
-    deadline = t0 + max_wait_sec
-    while time.time() < deadline and not rospy.is_shutdown():
-        if _i2c_addr_seen_on_bus(bus_nr, mouth_addr):
-            rospy.loginfo(
-                "%s: mouth OLED at I2C 0x%02X after %.2fs",
-                log_prefix,
-                mouth_addr,
-                time.time() - t0,
-            )
-            return True
-        rospy.sleep(0.3)
-    seen_3c = _i2c_addr_seen_on_bus(bus_nr, 0x3C)
-    seen_3d = _i2c_addr_seen_on_bus(bus_nr, mouth_addr)
-    rospy.logwarn(
-        "%s: timeout waiting for I2C 0x%02X — check cable, power, ADDR strap (mouth must be 0x3D)",
-        log_prefix,
-        mouth_addr,
-    )
-    if seen_3c is True and seen_3d is False:
-        rospy.logerr(
-            "%s: DIAGNOSTIC: 0x3C present, 0x%02X absent. oled_display writes stats only to 0x3C; "
-            "if the mouth panel shows SSID/IP, both SSD1306 modules likely listen on 0x3C — "
-            "set mouth module ADDR to 0x3D and run i2cdetect -y %d (expect 3c and 3d).",
-            log_prefix,
-            mouth_addr,
-            bus_nr,
-        )
-    return False
-
-
-def _normalize_oled_driver(raw):
-    s = (raw or "").strip().lower()
-    if s in ("sound_mouth_sync", "mouth", "sound_sync", ""):
-        return DRIVER_MOUTH
-    if s == "motik":
-        return DRIVER_MOTIK
-    return DRIVER_MOUTH
 
 
 def main():
@@ -269,117 +109,51 @@ def main():
 
     default_emotion = rospy.get_param(
         "~default_emotion", display_cfg.get("default_emotion", "neutral"))
-    auto_mode = rospy.get_param(
-        "~auto_mode", display_cfg.get("auto_mode", True))
-    silence_return_sec = float(rospy.get_param(
-        "~silence_return_sec", display_cfg.get("silence_return_sec", 3.0)))
+    auto_mode = rospy.get_param("~auto_mode", display_cfg.get("auto_mode", True))
+    silence_return_sec = float(
+        rospy.get_param("~silence_return_sec", display_cfg.get("silence_return_sec", 3.0)))
 
     resources_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "resources",
     )
     try:
-        import rospkg
-        resources_dir = os.path.join(
-            rospkg.RosPack().get_path("sound_mouth_sync"), "resources")
+        import rospkg as _rp
+
+        resources_dir = os.path.join(_rp.RosPack().get_path("sound_mouth_sync"), "resources")
     except Exception:
         pass
 
-    # Preload custom emotion PNGs
-    custom_emotion_cache = {}
-    if Image:
-        emo_dir = os.path.join(resources_dir, "emotions")
-        if os.path.isdir(emo_dir):
-            for fname in os.listdir(emo_dir):
-                name, ext = os.path.splitext(fname)
-                if ext.lower() in (".png", ".bmp", ".gif"):
-                    img = mer.load_custom_emotion_image(name, resources_dir, W, H)
-                    if img:
-                        custom_emotion_cache[name.lower()] = img
-                        rospy.loginfo(
-                            "display_node: loaded custom emotion '%s' from %s", name, fname)
+    custom_emotion_cache, cat_animation_frames, sleep_animation_frames, idle_faces = (
+        mdh.preload_emotion_assets(resources_dir, W, H, mer)
+    )
 
-    cat_animation_frames = []
-    for key in ("cat_frame0", "cat_frame1"):
-        cimg = mer.load_custom_emotion_image(key, resources_dir, W, H)
-        if cimg is not None:
-            cat_animation_frames.append(cimg)
-    if len(cat_animation_frames) >= 2:
-        rospy.loginfo(
-            "display_node: cat animation: %d frames (cat_frame0.png / cat_frame1.png)",
-            len(cat_animation_frames),
-        )
-    for ghost in ("cat_frame0", "cat_frame1"):
-        custom_emotion_cache.pop(ghost, None)
-    if len(cat_animation_frames) >= 2:
-        custom_emotion_cache.pop("cat", None)
+    _norm_emotion = mdh.make_norm_emotion(custom_emotion_cache, mer)
 
-    sleep_animation_frames = []
-    for key in ("sleep_frame1", "sleep_frame2", "sleep_frame3"):
-        simg = mer.load_custom_emotion_image(key, resources_dir, W, H)
-        if simg is not None:
-            sleep_animation_frames.append(simg)
-    if len(sleep_animation_frames) >= 2:
-        rospy.loginfo(
-            "display_node: sleep animation: %d frames (sleep_frame1.png … sleep_frame3.png)",
-            len(sleep_animation_frames),
-        )
-    for ghost in ("sleep_frame1", "sleep_frame2", "sleep_frame3"):
-        custom_emotion_cache.pop(ghost, None)
-    if len(sleep_animation_frames) >= 2:
-        custom_emotion_cache.pop("sleep", None)
+    idle_sleep_enabled = bool(
+        rospy.get_param("~idle_sleep_enabled", display_cfg.get("idle_sleep_enabled", True)))
+    idle_sleep_sec = float(
+        rospy.get_param("~idle_sleep_sec", display_cfg.get("idle_sleep_sec", 60.0)))
+    idle_sleep_rotate_sec = float(
+        rospy.get_param(
+            "~idle_sleep_rotate_sec",
+            display_cfg.get("idle_sleep_rotate_sec", 30.0),
+        ))
+    idle_sleep_emotion_pool = mdh.resolve_idle_sleep_emotion_pool(display_cfg, _norm_emotion)
 
-    idle_faces = mer.load_idle_faces(resources_dir, W, H)
-    if idle_faces:
-        rospy.loginfo("display_node: loaded %d idle face animation(s): %s",
-                      len(idle_faces), ", ".join(f["name"] for f in idle_faces))
-    else:
-        rospy.loginfo("display_node: no idle face animations in resources/idle_faces/ — "
-                      "using 3 built-in idle anims: %s", ", ".join(mer._BUILTIN_IDLE_ANIM_NAMES))
-
-    idle_face_frame_ms = int(display_cfg.get("idle_face_frame_ms", 120))
-
-    def _norm_emotion(name):
-        raw = (name or "neutral").strip().lower() or "neutral"
-        if raw not in mer.VALID_EMOTIONS and raw not in custom_emotion_cache:
-            return "neutral"
-        return raw
-
-    idle_sleep_enabled = bool(rospy.get_param(
-        "~idle_sleep_enabled", display_cfg.get("idle_sleep_enabled", True)))
-    idle_sleep_sec = float(rospy.get_param(
-        "~idle_sleep_sec", display_cfg.get("idle_sleep_sec", 60.0)))
-    idle_sleep_rotate_sec = float(rospy.get_param(
-        "~idle_sleep_rotate_sec",
-        display_cfg.get("idle_sleep_rotate_sec", 30.0),
-    ))
-    _idle_pool_raw = rospy.get_param(
-        "~idle_sleep_emotions", display_cfg.get("idle_sleep_emotions"))
-    if _idle_pool_raw is None:
-        _idle_pool_raw = rospy.get_param(
-            "~idle_sleep_emotion", display_cfg.get("idle_sleep_emotion", "sleepy"))
-    if isinstance(_idle_pool_raw, str):
-        _idle_pool_raw = [_idle_pool_raw]
-    elif not isinstance(_idle_pool_raw, (list, tuple)):
-        _idle_pool_raw = ["sleepy"]
-    idle_sleep_emotion_pool = [
-        _norm_emotion(str(x).strip()) for x in _idle_pool_raw if str(x).strip()
-    ]
-    if not idle_sleep_emotion_pool:
-        idle_sleep_emotion_pool = ["sleepy"]
-    fall_emotion = _norm_emotion(rospy.get_param(
-        "~fall_emotion", display_cfg.get("fall_emotion", "angry")))
+    fall_emotion = _norm_emotion(
+        rospy.get_param("~fall_emotion", display_cfg.get("fall_emotion", "angry")))
     posture_topic = rospy.get_param(
         "~posture_topic", display_cfg.get("posture_topic", "/robot/posture"))
     movement_topic = rospy.get_param(
         "~movement_topic", display_cfg.get("movement_topic", "/robot/is_moving"))
-    idle_require_movement_signal = bool(rospy.get_param(
-        "~idle_require_movement_signal",
-        display_cfg.get("idle_require_movement_signal", True),
-    ))
+    idle_require_movement_signal = bool(
+        rospy.get_param(
+            "~idle_require_movement_signal",
+            display_cfg.get("idle_require_movement_signal", True),
+        ))
 
     user_emotion = [_norm_emotion(default_emotion)]
-    # True = emotion mode, False = oscillogram mode
     _start_mode_raw = (
         rospy.get_param("~start_display_mode", display_cfg.get("start_display_mode", "oscillogram"))
         or "oscillogram"
@@ -394,28 +168,18 @@ def main():
     idle_sleep_pick = [idle_sleep_emotion_pool[0]]
     idle_sleep_last_switch = [0.0]
     idle_sleep_last_shown_pick = [None]
-    # Single source of truth for fall detection (no separate flag — avoids stale "fallen").
     posture_state = ["stand"]
     movement_signal_received = [False]
     is_moving = [False]
     sleepy_state = {}
-    idle_face_state = {
-        "anim_idx": -1,
-        "frame_idx": 0,
-        "last_frame_time": 0.0,
-    }
-    builtin_idle_state = {
-        "anim_idx": -1,
-        "start": 0.0,
-    }
+    idle_face_state = {"anim_idx": -1, "frame_idx": 0, "last_frame_time": 0.0}
+    builtin_idle_state = {"anim_idx": -1, "start": 0.0}
     last_drawn_effective = [""]
 
-    mode_pub = rospy.Publisher(
-        "/mouth/current_mode", String, queue_size=1, latch=True)
-    emotion_pub = rospy.Publisher(
-        "/mouth/current_emotion", String, queue_size=1, latch=True)
+    mode_pub = rospy.Publisher("/mouth/current_mode", String, queue_size=1, latch=True)
+    emotion_pub = rospy.Publisher("/mouth/current_emotion", String, queue_size=1, latch=True)
 
-    if not _wait_for_robot_standup("mouth_display_node"):
+    if not mdh.wait_for_robot_standup("mouth_display_node"):
         if rospy.is_shutdown():
             raise rospy.ROSInterruptException()
 
@@ -426,19 +190,16 @@ def main():
         )
     )
     if _LUMA_AVAILABLE and I2C_ADDRESS != 0x3C and mouth_delay > 0:
-        _wait_mouth_oled_on_bus(
-            "mouth_display_node", I2C_PORT, I2C_ADDRESS, mouth_delay
-        )
+        mdh.wait_mouth_oled_on_bus("mouth_display_node", I2C_PORT, I2C_ADDRESS, mouth_delay)
 
-    active_driver = [_normalize_oled_driver(rospy.get_param("/oled_3d/active_driver_default", DRIVER_MOUTH))]
-    pub_driver = rospy.Publisher(DRIVER_TOPIC, String, queue_size=1, latch=True)
+    active_driver = [mdh.normalize_oled_driver(rospy.get_param("/oled_3d/active_driver_default", mdh.DRIVER_MOUTH))]
+    pub_driver = rospy.Publisher(mdh.DRIVER_TOPIC, String, queue_size=1, latch=True)
 
-    # Protect OLED writes и переключение с motik.
     display_lock = threading.Lock()
     device = None
 
     def _mouth_owns_oled():
-        return active_driver[0] == DRIVER_MOUTH
+        return active_driver[0] == mdh.DRIVER_MOUTH
 
     def _release_oled():
         nonlocal device
@@ -486,8 +247,7 @@ def main():
                     I2C_PORT,
                 )
     else:
-        rospy.logwarn(
-            "display_node: luma.oled / Pillow not installed — display disabled")
+        rospy.logwarn("display_node: luma.oled / Pillow not installed — display disabled")
 
     def _norm_posture_str(raw):
         return (raw or "stand").strip().lower() or "stand"
@@ -496,12 +256,10 @@ def main():
         return _norm_posture_str(posture_state[0]) in mer.FALL_POSTURES
 
     def _idle_face_pick_random():
-        """Select a random idle face animation (different from current if possible)."""
         mer.idle_face_pick_random(
             idle_faces, idle_face_state, builtin_idle_state, sleepy_state)
 
     def _compose_emotion_frame(emo):
-        """Build 1-bit image for emotion (custom PNG > fall angry art > idle face > sleepy anim > builtin)."""
         if not Image:
             return None
         return mer.compose_emotion_frame(
@@ -520,136 +278,6 @@ def main():
             sleepy_state=sleepy_state,
         )
 
-    def _should_animate_idle():
-        """True if we should keep ticking the idle animation."""
-        if not _mouth_owns_oled() or not emotion_mode[0] or _robot_is_fallen() or device is None:
-            return False
-        if not idle_sleep_active[0]:
-            return False
-        return True
-
-    def _should_animate_cat():
-        if (
-            not emotion_mode[0]
-            or _robot_is_fallen()
-            or device is None
-            or not _mouth_owns_oled()
-        ):
-            return False
-        if idle_sleep_active[0]:
-            return False
-        return (
-            _effective_emotion() == "cat"
-            and len(cat_animation_frames) >= 2
-        )
-
-    def _should_animate_sleep():
-        if (
-            not emotion_mode[0]
-            or _robot_is_fallen()
-            or device is None
-            or not _mouth_owns_oled()
-        ):
-            return False
-        if idle_sleep_active[0]:
-            return False
-        return (
-            _effective_emotion() == "sleep"
-            and len(sleep_animation_frames) >= 2
-        )
-
-    def _should_animate_sleepy():
-        if (
-            not emotion_mode[0]
-            or _robot_is_fallen()
-            or device is None
-            or not _mouth_owns_oled()
-        ):
-            return False
-        if idle_sleep_active[0]:
-            return False
-        if custom_emotion_cache.get("sleepy"):
-            return False
-        return _effective_emotion() == "sleepy"
-
-    def _show_emotion(emo):
-        if not _mouth_owns_oled() or device is None:
-            return
-        try:
-            with display_lock:
-                # Re-check under lock: during mode switches, an already-started
-                # emotion render can otherwise overwrite oscillogram.
-                if emotion_mode[0] and device is not None:
-                    img = _compose_emotion_frame(emo)
-                    if img is not None:
-                        device.display(img)
-        except Exception as e:
-            rospy.logdebug("display_node emotion render: %s", e)
-
-    def _idle_anim_tick(_event):
-        try:
-            if rospy.is_shutdown() or not _should_animate_idle():
-                return
-            with display_lock:
-                if rospy.is_shutdown() or not _should_animate_idle():
-                    return
-                emo = _effective_emotion()
-                img = _compose_emotion_frame(emo)
-                if img is not None:
-                    device.display(img)
-        except Exception:
-            pass
-
-    def _cat_anim_tick(_event):
-        try:
-            if rospy.is_shutdown() or not _should_animate_cat():
-                return
-            with display_lock:
-                if rospy.is_shutdown() or not _should_animate_cat():
-                    return
-                img = _compose_emotion_frame("cat")
-                if img is not None:
-                    device.display(img)
-        except Exception:
-            pass
-
-    def _sleep_anim_tick(_event):
-        try:
-            if rospy.is_shutdown() or not _should_animate_sleep():
-                return
-            with display_lock:
-                if rospy.is_shutdown() or not _should_animate_sleep():
-                    return
-                img = _compose_emotion_frame("sleep")
-                if img is not None:
-                    device.display(img)
-        except Exception:
-            pass
-
-    def _sleepy_anim_tick(_event):
-        try:
-            if rospy.is_shutdown() or not _should_animate_sleepy():
-                return
-            with display_lock:
-                if rospy.is_shutdown() or not _should_animate_sleepy():
-                    return
-                img = _compose_emotion_frame("sleepy")
-                if img is not None:
-                    device.display(img)
-        except Exception:
-            pass
-
-    def _show_oscillogram(values):
-        if not _mouth_owns_oled() or device is None:
-            return
-        try:
-            with display_lock:
-                # If we already switched back to emotion mode, don't overwrite.
-                if not emotion_mode[0] and device is not None:
-                    device.display(_draw_oscillogram_waveform(values, W, H))
-        except Exception as e:
-            rospy.logdebug("display_node oscillogram render: %s", e)
-
     def _effective_emotion():
         if _robot_is_fallen():
             return fall_emotion
@@ -657,11 +285,82 @@ def main():
             return idle_sleep_pick[0]
         return user_emotion[0]
 
-    def _refresh_emotion_face():
-        """Update latched emotion topic and OLED when in emotion mode."""
-        if not emotion_mode[0]:
+    def _should_animate_idle():
+        if not _mouth_owns_oled() or not emotion_mode[0] or _robot_is_fallen() or device is None:
+            return False
+        if not idle_sleep_active[0]:
+            return False
+        return True
+
+    def _base_anim_candidate():
+        return (
+            emotion_mode[0]
+            and not _robot_is_fallen()
+            and device is not None
+            and _mouth_owns_oled()
+            and not idle_sleep_active[0]
+        )
+
+    def _should_animate_cat():
+        return _base_anim_candidate() and _effective_emotion() == "cat" and len(cat_animation_frames) >= 2
+
+    def _should_animate_sleep():
+        return (
+            _base_anim_candidate()
+            and _effective_emotion() == "sleep"
+            and len(sleep_animation_frames) >= 2
+        )
+
+    def _should_animate_sleepy():
+        return (
+            _base_anim_candidate()
+            and not custom_emotion_cache.get("sleepy")
+            and _effective_emotion() == "sleepy"
+        )
+
+    def _locked_anim_tick(should_fn, emotion_arg):
+        def _tick(_event):
+            try:
+                if rospy.is_shutdown() or not should_fn():
+                    return
+                with display_lock:
+                    if rospy.is_shutdown() or not should_fn():
+                        return
+                    emo = emotion_arg() if callable(emotion_arg) else emotion_arg
+                    img = _compose_emotion_frame(emo)
+                    if img is not None:
+                        device.display(img)
+            except Exception:
+                pass
+
+        return _tick
+
+    def _show_emotion(emo):
+        if not _mouth_owns_oled() or device is None:
             return
-        if not _mouth_owns_oled():
+        try:
+            with display_lock:
+                if emotion_mode[0] and device is not None:
+                    img = _compose_emotion_frame(emo)
+                    if img is not None:
+                        device.display(img)
+        except Exception as e:
+            rospy.logdebug("display_node emotion render: %s", e)
+
+    def _show_oscillogram(values):
+        if not _mouth_owns_oled() or device is None:
+            return
+        try:
+            with display_lock:
+                if not emotion_mode[0] and device is not None:
+                    img = mdh.draw_oscillogram_waveform(values, W, H)
+                    if img is not None:
+                        device.display(img)
+        except Exception as e:
+            rospy.logdebug("display_node oscillogram render: %s", e)
+
+    def _refresh_emotion_face():
+        if not emotion_mode[0] or not _mouth_owns_oled():
             return
         emo = _effective_emotion()
         if idle_sleep_active[0] and last_drawn_effective[0] != "__idle_face__":
@@ -683,17 +382,12 @@ def main():
             _show_emotion(emo)
 
     def _bump_activity_timer():
-        """Reset idle-sleep countdown; exit idle-sleep overlay if active."""
         last_activity_time[0] = time.time()
         if idle_sleep_active[0]:
             idle_sleep_active[0] = False
             _refresh_emotion_face()
 
     def _on_audible_detected(now, wave_values):
-        """
-        Shared path: sound from /mouth/audio_wave and/or /audio/level.
-        wave_values: list of floats or None (level-only: draw flat line until next wave).
-        """
         was_idle_sleep_overlay = idle_sleep_active[0]
         last_audio_time[0] = now
         last_activity_time[0] = now
@@ -722,13 +416,11 @@ def main():
                 emotion_mode[0] = True
                 mode_pub.publish(String(data="emotion"))
             _refresh_emotion_face()
-            rospy.logwarn(
-                "display_node: robot fallen (%s) — showing '%s'", new, fall_emotion)
+            rospy.logwarn("display_node: robot fallen (%s) — showing '%s'", new, fall_emotion)
         elif not new_fallen and prev_fallen:
             idle_sleep_active[0] = False
             _bump_activity_timer()
-            rospy.loginfo(
-                "display_node: robot upright — emotion '%s'", user_emotion[0])
+            rospy.loginfo("display_node: robot upright — emotion '%s'", user_emotion[0])
             _refresh_emotion_face()
 
     def on_moving(msg):
@@ -786,7 +478,6 @@ def main():
             idle_sleep_active[0] = False
             _refresh_emotion_face()
 
-    # Initial state
     mode_pub.publish(String(data="emotion"))
     emotion_pub.publish(String(data=user_emotion[0]))
     if device:
@@ -813,30 +504,22 @@ def main():
             rospy.loginfo("display_node: mode -> emotion")
 
     def on_emotion(msg):
-        raw = _norm_emotion(
-            (msg.data or "neutral").strip().lower() or "neutral")
+        raw = _norm_emotion((msg.data or "neutral").strip().lower() or "neutral")
         user_emotion[0] = raw
         _bump_activity_timer()
         if emotion_mode[0]:
             _refresh_emotion_face()
 
     def on_audio_wave(msg):
-        if _robot_is_fallen():
-            return
-        if not msg.data:
+        if _robot_is_fallen() or not msg.data:
             return
         values = list(msg.data)
-
         now = time.time()
-
         if not emotion_mode[0]:
             last_activity_time[0] = now
-
         audible = _mouth_audio_gates.waveform_is_audible(values)
-
         if audible:
             _on_audible_detected(now, values)
-
         if not emotion_mode[0]:
             if (now - last_render_time[0]) >= _MIN_RENDER_INTERVAL:
                 _show_oscillogram(values)
@@ -850,7 +533,6 @@ def main():
     emotion_topic = rospy.get_param("~emotion_topic", "/mouth/effective_emotion")
 
     def on_audio_level(msg):
-        """Same energy scale as audio_capture_node (RMS / full-scale); catches quiet files."""
         if _robot_is_fallen():
             return
         try:
@@ -865,12 +547,12 @@ def main():
         _on_audible_detected(now, None)
 
     def _on_oled_driver(msg):
-        n = _normalize_oled_driver(msg.data)
+        n = mdh.normalize_oled_driver(msg.data)
         if n == active_driver[0]:
             return
         active_driver[0] = n
-        rospy.loginfo("display_node: %s -> %s", DRIVER_TOPIC, n)
-        if n == DRIVER_MOTIK:
+        rospy.loginfo("display_node: %s -> %s", mdh.DRIVER_TOPIC, n)
+        if n == mdh.DRIVER_MOTIK:
             _release_oled()
         else:
             rospy.sleep(0.25)
@@ -881,7 +563,7 @@ def main():
                 _show_oscillogram([0.0] * W)
 
     pub_driver.publish(String(data=active_driver[0]))
-    rospy.Subscriber(DRIVER_TOPIC, String, _on_oled_driver, queue_size=5)
+    rospy.Subscriber(mdh.DRIVER_TOPIC, String, _on_oled_driver, queue_size=5)
 
     if not emotion_mode[0]:
         mode_pub.publish(String(data="oscillogram"))
@@ -890,24 +572,20 @@ def main():
 
     rospy.Subscriber(mode_topic, String, on_mode, queue_size=1)
     rospy.Subscriber(emotion_topic, String, on_emotion, queue_size=1)
-    rospy.Subscriber("/mouth/audio_wave", Float32MultiArray,
-                     on_audio_wave, queue_size=1)
+    rospy.Subscriber("/mouth/audio_wave", Float32MultiArray, on_audio_wave, queue_size=1)
     rospy.Subscriber(audio_level_topic, Float32, on_audio_level, queue_size=1)
     rospy.loginfo(
         "display_node: also subscribing %s for sound (oscillogram wake)", audio_level_topic)
-    rospy.loginfo(
-        "display_node: control topics mode=%s emotion=%s", mode_topic, emotion_topic)
+    rospy.loginfo("display_node: control topics mode=%s emotion=%s", mode_topic, emotion_topic)
     rospy.Subscriber(posture_topic, String, on_posture, queue_size=1)
     rospy.Subscriber(movement_topic, Bool, on_moving, queue_size=1)
 
-    # Timer for auto-return to emotion mode after silence
     def _auto_return_tick(_event):
         if rospy.is_shutdown() or _robot_is_fallen():
             return
         if not auto_mode or emotion_mode[0]:
             return
-        elapsed = time.time() - last_audio_time[0]
-        if elapsed >= silence_return_sec:
+        if time.time() - last_audio_time[0] >= silence_return_sec:
             emotion_mode[0] = True
             mode_pub.publish(String(data="emotion"))
             _refresh_emotion_face()
@@ -916,13 +594,12 @@ def main():
         rospy.Timer(rospy.Duration(0.3), _auto_return_tick)
 
     rospy.Timer(rospy.Duration(0.5), on_idle_tick)
-    rospy.Timer(rospy.Duration(0.12), _idle_anim_tick)
-    rospy.Timer(rospy.Duration(0.12), _sleepy_anim_tick)
-    rospy.Timer(rospy.Duration(0.12), _cat_anim_tick)
-    rospy.Timer(rospy.Duration(0.12), _sleep_anim_tick)
+    rospy.Timer(rospy.Duration(0.12), _locked_anim_tick(_should_animate_idle, _effective_emotion))
+    rospy.Timer(rospy.Duration(0.12), _locked_anim_tick(_should_animate_sleepy, "sleepy"))
+    rospy.Timer(rospy.Duration(0.12), _locked_anim_tick(_should_animate_cat, "cat"))
+    rospy.Timer(rospy.Duration(0.12), _locked_anim_tick(_should_animate_sleep, "sleep"))
 
     def _oled_retry_tick(_event):
-        """Повторно открыть SSD1306, если при старте I2C был занят или ошибка была временной."""
         if rospy.is_shutdown() or not _LUMA_AVAILABLE or not _mouth_owns_oled():
             return
         with display_lock:
@@ -961,9 +638,7 @@ def main():
             else:
                 _show_oscillogram([0.0] * W)
 
-        rospy.Timer(
-            rospy.Duration(_mouth_redraw_after), _delayed_mouth_redraw, oneshot=True
-        )
+        rospy.Timer(rospy.Duration(_mouth_redraw_after), _delayed_mouth_redraw, oneshot=True)
 
     def shutdown_display():
         if not _mouth_owns_oled() or device is None:

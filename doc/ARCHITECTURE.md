@@ -80,7 +80,7 @@ graph LR
 | `idle_face_pick_random`, `idle_face_get_frame`, `builtin_idle_get_frame` | Выбор и проигрывание случайной idle-анимации из папки или тройки cigarette/cat/yawn. |
 | `compose_emotion_frame` | **Единая точка композиции:** приоритет PNG → cat/sleep битмапы → падение → оверлей idle-sleep из YAML/pool → обычная эмоция. Сюда из `display_node` передаются кэш картинок, флаги `robot_fallen`, `idle_sleep_active`, словари состояния анимаций. |
 
-**Чего здесь нет:** ROS, I2C, осциллограмма (`display_node` рисует волну сам), логика таймеров «когда переключить режим» — всё это остаётся в `display_node`.
+**Чего здесь нет:** ROS, I2C, осциллограмма (линия волны — `mouth_display_helpers.draw_oscillogram_waveform`, вызывается из `display_node`), логика таймеров «когда переключить режим» — в `display_node`.
 
 **Кто импортирует:** только `display_node`. `emotion_node` модуль не трогает.
 
@@ -88,7 +88,7 @@ graph LR
 
 **Файл:** `scripts/display_node.py`
 
-Управляет OLED-дисплеем и импортирует `mouth_emotion_render` для всех кадров режима *emotion*; осциллограмма рисуется **только** в этом файле (`_draw_oscillogram_waveform`). Поддерживает параметр `rotate` (0/1/2/3) для физически перевёрнутого монтажа (по умолчанию `rotate=2` — дисплей перевёрнут на 180°). Работает в одном из двух режимов:
+Управляет OLED-дисплеем и импортирует `mouth_emotion_render` для всех кадров режима *emotion*; осциллограмма собирается в `mouth_display_helpers.draw_oscillogram_waveform` и выводится из этой ноды. Поддерживает параметр `rotate` (0/1/2/3) для физически перевёрнутого монтажа (по умолчанию `rotate=2` — дисплей перевёрнут на 180°). Работает в одном из двух режимов:
 
 ```mermaid
 stateDiagram-v2
@@ -204,7 +204,8 @@ sound_mouth_sync/
 │   └── sound_mouth_sync.launch    # Launches nodes (display, audio, emotion)
 ├── scripts/
 │   ├── emotion_node.py             # Node 0: effective mode/emotion topics
-│   ├── display_node.py            # Node 1: OLED (emotion via mouth_emotion_render + oscillogram)
+│   ├── display_node.py            # Node 1: OLED (emotion via mouth_emotion_render + oscillogram via helpers)
+│   ├── mouth_display_helpers.py   # standup/I2C probe, waveform bitmap, asset preload (no ROS node)
 │   ├── audio_capture_node.py      # Node 2: audio capture (PulseAudio, USB auto-detect)
 │   ├── mouth_emotion_render.py   # PIL 1-bit emotion frames (imported by display_node, not a node)
 │   ├── mouth_audio_gates.py       # Waveform / level thresholds (display + tests)
@@ -247,7 +248,7 @@ sound_mouth_sync/
 ```
 I2C bus 1
 ├── 0x3C  ← ainex_bringup/oled_display.py   (системный статус: SSID, IP, CPU, BAT)
-└── 0x3D  ← sound_mouth_sync/display_node.py (рот: эмоции через mouth_emotion_render + осциллограмма в display_node)
+└── 0x3D  ← sound_mouth_sync/display_node.py (рот: эмоции через mouth_emotion_render; волна через mouth_display_helpers)
 ```
 
 Адрес **0x3D** на модуле рта задаётся **железом**: на платах SSD1306 часто выведена зона **IIC ADDRESS SELECT** — два варианта пайки **SMD-резистора** (перемычки). На шёлке печатной платы могут быть подписи **0x78** и **0x7A**: это **8-битные** обозначения (как в некоторых даташитах, с учётом бита R/W). Соответствие **7-bit** адресу на шине: **0x78 → 0x3C**, **0x7A → 0x3D**. По умолчанию у модуля часто стоит позиция **0x78 (0x3C)** — для **рта** резистор переносят на **0x7A**, чтобы на `i2cdetect` появилась отдельная строка **3d**. В `config/sound_mouth_sync.yaml` → `hardware.i2c_address` и `oled_i2c_address` в launch должны **совпадать** с выбранной позицией (для рта — **0x3D**). Иллюстрация: `doc/images/oled_i2c_address_select_example.png`. Как внести это в Visio: [VISIO_SCHEME_OLED_JUMPER.md](VISIO_SCHEME_OLED_JUMPER.md).
