@@ -221,14 +221,11 @@ Host:    VLC/aplay → PULSE_SERVER=tcp:127.0.0.1:4713 → (same PulseAudio abov
    - Проверка: `rosnode list` (ошибка «Unable to communicate with master»).
    - Решение: запустить `roscore` или `roslaunch ainex_bringup bringup.launch`.
 
-2. **Ноды ждут init_pose/init_finish (подъём робота)**
-   - Симптом: `display_node` запущен, но OLED 0x3D пустой; в логе: «ожидание init_pose/init_finish».
-   - Причина: `ainex_controller` не установил `init_pose/init_finish=True` (робот не встал, контроллер не запущен, стенд без привода).
-   - Решение: задать таймаут и разрешить продолжение:
-     ```bash
-     roslaunch sound_mouth_sync sound_mouth_sync.launch wait_standup_timeout_sec:=30 proceed_without_standup:=true
-     ```
-     Или установить параметр вручную: `rosparam set /init_pose/init_finish true`.
+2. **Ноды ждут флаг подъёма (`init_finish`) или таймаут**
+   - Симптом: долго пустой OLED 0x3D и нет топика `/mouth/audio_wave` (узел `mouth_audio_capture_node` ещё не вышел из ожидания).
+   - Код проверяет **`/init_pose/init_finish`** и **`/ainex_controller/init_pose/init_finish`** (у разных сборок контроллера разное имя).
+   - По умолчанию в `sound_mouth_sync.launch`: **`wait_standup_timeout_sec=30`**, **`proceed_without_standup=true`** — после таймаута рот и захват звука стартуют в любом случае.
+   - Для стенда без ожидания: `skip_robot_standup_wait:=true` на нодах или `rosparam set /init_pose/init_finish true`.
 
 3. **Библиотека Adafruit_SSD1306 не установлена (oled_display.py)**
    - Симптом: `oled_display.py` падает с `ModuleNotFoundError: No module named 'Adafruit_SSD1306'`.
@@ -299,6 +296,7 @@ rostopic echo -n 1 /mouth/current_mode   # Текущий режим рта
 | 2026-04-02 | AI Agent | Dual-OLED: документация § полевой симптом «вчера ОК / утром SSID на рту»; `display_node` после standup опрашивает `i2cdetect` до появления **0x3D** (лимит `mouth_oled_startup_delay_sec`), лог **DIAGNOSTIC** при «есть 0x3C, нет 0x3D». ARCHITECTURE / SECOND_DISPLAY §8.0–8.7 / README / CONTRACT / AUDIO_PLAYBACK cross-links. |
 | 2026-04-02 | AI Agent | Hardware doc: **IIC ADDRESS SELECT** (PCB 0x78/0x7A ↔ 7-bit 0x3C/0x3D), `doc/images/oled_i2c_address_select_example.png`, `VISIO_SCHEME_OLED_JUMPER.md`; README structure table; README_EMOTIONS + idle_faces README cross-links. |
 | 2026-04-07 | AI Agent | Refactor: `mouth_display_helpers.py` extracted from `display_node.py` (standup, I2C poll, oscillogram draw, asset preload, driver strings, idle pool); unified animation timer callback factory; behaviour and topics unchanged. |
-| 2026-04-08 | AI Agent | Fix: `cat` и `sleep` больше не принудительно сводятся к `neutral` в `compose_emotion_frame`; добавлены встроенные fallback-анимации для этих эмоций (idle и обычный режим), чтобы круг эмоций и ручное переключение показывали корректные кадры сна/кота даже без внешних PNG. |
-| 2026-04-08 | AI Agent | Fix: `emotion_node` теперь всегда форвардит входящие `/mouth/emotion` в `effective_emotion`, даже если значение не изменилось, чтобы manual-republish сбрасывал idle-overlay корректно. |
-| 2026-04-08 | AI Agent | Fix: `display_node` теперь анимирует `cat` и `sleep` и без `cat_frame*`/`sleep_frame*` ассетов (периодическая перерисовка, т.к. встроенные кадры зависят от времени). |
+| 2026-04-08 | AI Agent | Stand-up gate: `robot_standup_param_true()` checks `/init_pose/init_finish` and `/ainex_controller/init_pose/init_finish`; `~skip_robot_standup_wait`. Launch defaults `wait_standup_timeout_sec=30`, `proceed_without_standup=true`; `audio_capture_node` reuses `mouth_display_helpers.wait_for_robot_standup` so `/mouth/audio_wave` starts after timeout. YAML default `start_display_mode: emotion`. `bringup.launch` passes explicit mouth stack args. |
+| 2026-04-08 | AI Agent | Fix `compose_emotion_frame` for `cat`/`sleep`: built-in fallbacks instead of `neutral` in idle and normal mode; emotion cycle and manual switching show correct frames without external PNG. `display_node` time-based redraw for built-in cat/sleep when `cat_frame*`/`sleep_frame*` assets are absent. |
+| 2026-04-08 | AI Agent | `emotion_node` always forwards `/mouth/emotion` to `effective_emotion` when unchanged so manual republish clears idle overlay; mode/emotion republished on every input. |
+| 2026-04-08 | AI Agent | `display_node` manual override: subscriptions to `/mouth/emotion` and `/mouth/mode` so idle sleep clears on direct terminal commands. |

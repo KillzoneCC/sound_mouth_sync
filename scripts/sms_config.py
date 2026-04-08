@@ -87,7 +87,7 @@ def get_emotions_config():
 
 def get_display_settings():
     return _get_section("display", {
-        "start_display_mode": "oscillogram",
+        "start_display_mode": "emotion",
         "default_emotion": "neutral",
         "auto_mode": True,
         "silence_return_sec": 3.0,
@@ -100,7 +100,7 @@ def get_display_settings():
         "movement_topic": "/robot/is_moving",
         "idle_require_movement_signal": True,
         "audio_level_topic": "/audio/level",
-        "mouth_display_redraw_after_sec": 0.0,
+        "mouth_display_redraw_after_sec": 3.0,
         "reassert_effective_topics_after_sec": 0.0,
     })
 

@@ -27,6 +27,24 @@ DRIVER_TOPIC = "/oled_3d/active_driver"
 DRIVER_MOUTH = "sound_mouth_sync"
 DRIVER_MOTIK = "motik"
 
+# ainex_controller sets rospy.set_param('init_pose/init_finish', …) → /ainex_controller/init_pose/init_finish.
+# Older stacks may use a global /init_pose/init_finish. Mouth nodes must check both.
+_INIT_FINISH_PARAM_KEYS = (
+    "/init_pose/init_finish",
+    "/ainex_controller/init_pose/init_finish",
+)
+
+
+def robot_standup_param_true() -> bool:
+    """True if any known init-finish rosparam is set True (controller finished stand-up sequence)."""
+    for key in _INIT_FINISH_PARAM_KEYS:
+        try:
+            if bool(rospy.get_param(key, False)):
+                return True
+        except Exception:
+            continue
+    return False
+
 
 def normalize_oled_driver(raw: Optional[str]) -> str:
     s = (raw or "").strip().lower()
@@ -60,11 +78,21 @@ def draw_oscillogram_waveform(y_values, width: int, height: int):
 
 def wait_for_robot_standup(log_prefix: str = "mouth_display_node") -> bool:
     """
-    Wait for init_pose/init_finish=True before opening mouth OLED.
+    Wait until stand-up is signaled on a known init_finish param, or timeout.
 
-    ~wait_standup_timeout_sec: 0 = unlimited; >0 = seconds.
-    ~proceed_without_standup: if timeout >0 and true, continue without standup.
+    Checks global /init_pose/init_finish and /ainex_controller/init_pose/init_finish
+    (mouth_display_node's own init_pose/init_finish would never match the controller).
+
+    ~skip_robot_standup_wait: if true, return immediately (bench / headless only).
+    ~wait_standup_timeout_sec: 0 = wait until shutdown if flag never true; >0 = seconds.
+    ~proceed_without_standup: if timeout >0 and true, continue when flag still false.
     """
+    _skip = rospy.get_param("~skip_robot_standup_wait", False)
+    if _skip is True or (
+        isinstance(_skip, str) and _skip.strip().lower() in ("true", "1", "yes")
+    ):
+        rospy.logwarn("%s: skip_robot_standup_wait=true — proceeding without stand-up flag", log_prefix)
+        return False
     timeout = float(rospy.get_param("~wait_standup_timeout_sec", 0.0))
     _proceed = rospy.get_param("~proceed_without_standup", False)
     proceed = _proceed is True or (
@@ -72,10 +100,8 @@ def wait_for_robot_standup(log_prefix: str = "mouth_display_node") -> bool:
     )
     start = time.time()
     while not rospy.is_shutdown():
-        if rospy.get_param("init_pose/init_finish", False):
-            rospy.loginfo(
-                "%s: робот встал (init_pose/init_finish), открываем OLED", log_prefix
-            )
+        if robot_standup_param_true():
+            rospy.loginfo("%s: stand-up init_finish True — continuing", log_prefix)
             return True
         if timeout > 0.0 and (time.time() - start) > timeout:
             if proceed:

@@ -8,8 +8,9 @@
     roslaunch sound_mouth_sync sound_mouth_sync.launch idle_sleep_sec:=120
     roslaunch sound_mouth_sync sound_mouth_sync.launch auto_mode:=false
 
-  После подъёма робота (ainex_controller): по умолчанию обе ноды ждут init_pose/init_finish.
-  Стенд без привода: wait_standup_timeout_sec:=30 proceed_without_standup:=true
+  Stand-up gate: checks /init_pose/init_finish and /ainex_controller/init_pose/init_finish.
+  Default: wait_standup_timeout_sec=30 + proceed_without_standup=true so display and
+  audio_capture start even if init_finish never goes True (mouth + /mouth/audio_wave).
 
   Если на экране SSID/IP/BAT — это ainex_bringup oled_display.py (I2C 0x3C). Отключите
   oled_display.service, если рот должен занять тот же OLED: oled_i2c_address:=60 (0x3C).
@@ -22,16 +23,16 @@
 
   <!-- Backward-compatible args (used by ainex_bringup include) -->
   <arg name="wait_after_controller" default="true" doc="compat: accepted from ainex_bringup"/>
-  <arg name="wait_controller_timeout_sec" default="0" doc="compat: maps to wait_standup_timeout_sec"/>
+  <arg name="wait_controller_timeout_sec" default="30" doc="compat: maps to wait_standup_timeout_sec (0=infinite wait)"/>
   <arg name="controller_settle_sec" default="0.0" doc="compat: accepted from ainex_bringup"/>
-  <arg name="wait_standup_timeout_sec" default="$(arg wait_controller_timeout_sec)" doc="0=ждать init_pose/init_finish без лимита"/>
-  <arg name="proceed_without_standup" default="false" doc="после таймаута>0: старт без подъёма"/>
+  <arg name="wait_standup_timeout_sec" default="$(arg wait_controller_timeout_sec)" doc="seconds; 0=wait until init_finish or shutdown"/>
+  <arg name="proceed_without_standup" default="true" doc="after timeout: start mouth + audio anyway (needed if init_finish never True)"/>
   <!-- 61=0x3D «рот», 60=0x3C если один OLED как у oled_display (тогда остановите oled_display.service) -->
   <arg name="oled_i2c_address" default="61" doc="7-bit I2C адрес SSD1306"/>
 
   <!-- Display node args -->
   <arg name="default_emotion" default="neutral" doc="Emotion shown at startup"/>
-  <arg name="start_display_mode" default="oscillogram" doc="oscillogram | emotion — режим на OLED после подъёма"/>
+  <arg name="start_display_mode" default="emotion" doc="emotion | oscillogram — emotion does not need /mouth/audio_wave"/>
   <arg name="auto_mode" default="true" doc="Auto-switch to oscillogram on sound"/>
   <arg name="silence_return_sec" default="3.0" doc="Seconds of silence before returning to emotion"/>
   <arg name="idle_sleep_enabled" default="true" doc="Enable sleepy face after idle"/>

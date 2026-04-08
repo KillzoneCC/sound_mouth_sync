@@ -24,8 +24,8 @@ sound_mouth_sync:
     default_emotion: neutral
 
   display:
-    # Стартовый режим на OLED после подъёма: oscillogram (линия) | emotion
-    start_display_mode: oscillogram
+    # emotion: mouth visible without /mouth/audio_wave; oscillogram needs audio_capture publishing
+    start_display_mode: emotion
     default_emotion: neutral
     auto_mode: true                  # auto-switch oscillogram on sound, back to emotion on silence
     silence_return_sec: 3.0          # seconds of silence before returning to emotion mode
@@ -46,7 +46,7 @@ sound_mouth_sync:
     audio_level_topic: /audio/level    # Float32 RMS 0..1 from audio_capture — wakes oscillogram if wave peaks are too low
     # Повторная отрисовка рта через N с после старта (0 = выкл). Имеет смысл 8–10 с, если после
     # включения на «рту» на мгновение виден мусор/чужой кадр; не устраняет дублирующий I2C-адрес.
-    mouth_display_redraw_after_sec: 0
+    mouth_display_redraw_after_sec: 3.0
     # Повторно опубликовать /mouth/effective_* через N с (0 = выкл). Вместе с redraw помогает
     # «дожать» осциллограмму после старта, если подписчик подключился поздно.
     reassert_effective_topics_after_sec: 0

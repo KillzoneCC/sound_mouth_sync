@@ -78,9 +78,9 @@ def main():
     )
     default_mode = rospy.get_param(
         "~default_mode",
-        display_cfg.get("start_display_mode", "oscillogram"),
+        display_cfg.get("start_display_mode", "emotion"),
     )
-    default_mode = _normalize_mode(default_mode, "oscillogram")
+    default_mode = _normalize_mode(default_mode, "emotion")
     default_emotion = _normalize_emotion(default_emotion, "neutral")
 
     emotion_cycle_enabled = bool(
@@ -105,17 +105,18 @@ def main():
 
     def on_mode(msg: String):
         new_mode = _normalize_mode(msg.data, current_mode[0])
-        if new_mode != current_mode[0]:
-            current_mode[0] = new_mode
-            mode_pub.publish(String(data=current_mode[0]))
+        # Always republish on any incoming /mouth/mode message.
+        # This guarantees that display_node treats the input as "activity"
+        # and can clear idle overlays even when the mode string didn't change.
+        current_mode[0] = new_mode
+        mode_pub.publish(String(data=current_mode[0]))
 
     def on_emotion(msg: String):
         new_emo = _normalize_emotion(msg.data, current_emotion[0])
-        # Important: even if emotion value didn't change (e.g. user re-publishes the
-        # same emotion), we forward it. display_node uses any received emotion
-        # message as "activity" signal to clear idle overlay (idle_sleep_active).
-        # Without forwarding on equality, idle overlay may "stick" and look like
-        # manual override is ignored.
+        # Always republish on any incoming /mouth/emotion message. Even if the
+        # value is unchanged (e.g. user re-publishes the same emotion), we forward
+        # it so display_node sees activity and clears idle overlay; otherwise
+        # idle_sleep_active can stick and manual override looks ignored.
         current_emotion[0] = new_emo
         emotion_pub.publish(String(data=current_emotion[0]))
 

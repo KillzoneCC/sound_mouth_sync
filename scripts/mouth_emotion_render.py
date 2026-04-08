@@ -619,10 +619,10 @@ def compose_emotion_frame(
                     return custom_emotion_cache["sleepy"]
                 return draw_sleepy_animated(width, height, sleepy_state)
             if emo == "cat":
-                elapsed = time.time() - builtin_idle_state.get("start", time.time())
+                elapsed = time.time() - float(builtin_idle_state.get("start", 0.0) or 0.0)
                 return draw_builtin_idle_cat(width, height, elapsed)
             if emo == "sleep":
-                elapsed = time.time() - builtin_idle_state.get("start", time.time())
+                elapsed = time.time() - float(builtin_idle_state.get("start", 0.0) or 0.0)
                 return draw_builtin_idle_yawn_zzz(width, height, elapsed)
             frame = builtin_idle_get_frame(
                 width, height, builtin_idle_state, sleepy_state)
@@ -631,7 +631,9 @@ def compose_emotion_frame(
     if emo == "sleepy":
         return draw_sleepy_animated(width, height, sleepy_state)
     if emo == "cat":
-        return draw_builtin_idle_cat(width, height, time.time())
+        elapsed = time.time() - float(builtin_idle_state.get("start", 0.0) or 0.0)
+        return draw_builtin_idle_cat(width, height, elapsed)
     if emo == "sleep":
-        return draw_builtin_idle_yawn_zzz(width, height, time.time())
+        elapsed = time.time() - float(builtin_idle_state.get("start", 0.0) or 0.0)
+        return draw_builtin_idle_yawn_zzz(width, height, elapsed)
     return draw_emotion(emo, width, height)

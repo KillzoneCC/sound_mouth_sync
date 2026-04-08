@@ -27,12 +27,18 @@ from __future__ import division
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 
 import numpy as np
 import rospy
 from std_msgs.msg import Float32, Float32MultiArray
+
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
+import mouth_display_helpers as _mdh
 
 WAVE_WIDTH = 128
 SAMPLE_BYTES = 2
@@ -305,39 +311,6 @@ def _downsample_to_waveform(samples_f32, wave_width):
     return samples_f32[indices].tolist()
 
 
-def _wait_for_robot_standup(log_prefix="mouth_audio_capture_node"):
-    """См. display_node._wait_for_robot_standup — тот же контракт (параметры ноды)."""
-    timeout = float(rospy.get_param("~wait_standup_timeout_sec", 0.0))
-    _proceed = rospy.get_param("~proceed_without_standup", False)
-    proceed = (
-        _proceed is True
-        or (isinstance(_proceed, str) and _proceed.strip().lower() in ("true", "1", "yes"))
-    )
-    start = time.time()
-    while not rospy.is_shutdown():
-        if rospy.get_param("init_pose/init_finish", False):
-            rospy.loginfo("%s: робот встал (init_pose/init_finish), старт захвата звука", log_prefix)
-            return True
-        if timeout > 0.0 and (time.time() - start) > timeout:
-            if proceed:
-                rospy.logwarn(
-                    "%s: таймаут ожидания подъёма (%.0f с), proceed_without_standup=true",
-                    log_prefix,
-                    timeout,
-                )
-                return False
-            rospy.logerr(
-                "%s: таймаут init_pose/init_finish (%.0f с). Стенд: wait_standup_timeout_sec>0 "
-                "и proceed_without_standup:=true",
-                log_prefix,
-                timeout,
-            )
-            rospy.signal_shutdown("standup timeout (init_pose/init_finish)")
-            raise rospy.ROSInterruptException()
-        time.sleep(0.5)
-    return False
-
-
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -350,7 +323,7 @@ def main():
     wave_width = int(rospy.get_param("~wave_width", WAVE_WIDTH))
     chunk_bytes = chunk_size * SAMPLE_BYTES
 
-    if not _wait_for_robot_standup("mouth_audio_capture_node"):
+    if not _mdh.wait_for_robot_standup("mouth_audio_capture_node"):
         if rospy.is_shutdown():
             raise rospy.ROSInterruptException()
 

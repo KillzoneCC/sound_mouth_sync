@@ -155,8 +155,8 @@ def main():
 
     user_emotion = [_norm_emotion(default_emotion)]
     _start_mode_raw = (
-        rospy.get_param("~start_display_mode", display_cfg.get("start_display_mode", "oscillogram"))
-        or "oscillogram"
+        rospy.get_param("~start_display_mode", display_cfg.get("start_display_mode", "emotion"))
+        or "emotion"
     ).strip().lower()
     emotion_mode = [_start_mode_raw != "oscillogram"]
     last_audio_time = [0.0]
@@ -478,10 +478,15 @@ def main():
             idle_sleep_active[0] = False
             _refresh_emotion_face()
 
-    mode_pub.publish(String(data="emotion"))
     emotion_pub.publish(String(data=user_emotion[0]))
-    if device:
-        _show_emotion(user_emotion[0])
+    if emotion_mode[0]:
+        mode_pub.publish(String(data="emotion"))
+        if device and _mouth_owns_oled():
+            _show_emotion(user_emotion[0])
+    else:
+        mode_pub.publish(String(data="oscillogram"))
+        if device is not None and _mouth_owns_oled():
+            _show_oscillogram([0.0] * W)
 
     def on_mode(msg):
         raw = (msg.data or "").strip().lower()
@@ -565,13 +570,14 @@ def main():
     pub_driver.publish(String(data=active_driver[0]))
     rospy.Subscriber(mdh.DRIVER_TOPIC, String, _on_oled_driver, queue_size=5)
 
-    if not emotion_mode[0]:
-        mode_pub.publish(String(data="oscillogram"))
-        if device is not None and _mouth_owns_oled():
-            _show_oscillogram([0.0] * W)
-
     rospy.Subscriber(mode_topic, String, on_mode, queue_size=1)
     rospy.Subscriber(emotion_topic, String, on_emotion, queue_size=1)
+    # Manual override path:
+    # In normal architecture effective_* topics come from emotion_node.
+    # But if emotion_node is temporarily unavailable/restarting, direct
+    # commands to /mouth/emotion and /mouth/mode must still clear idle sleep.
+    rospy.Subscriber("/mouth/mode", String, on_mode, queue_size=1)
+    rospy.Subscriber("/mouth/emotion", String, on_emotion, queue_size=1)
     rospy.Subscriber("/mouth/audio_wave", Float32MultiArray, on_audio_wave, queue_size=1)
     rospy.Subscriber(audio_level_topic, Float32, on_audio_level, queue_size=1)
     rospy.loginfo(

@@ -175,6 +175,8 @@ rostopic echo /mouth/current_emotion
 
 `neutral` → `happy` → `sad` → `angry` → `surprised` → `excited` → `love` → **`cute`** → `confused` → `scared` → `bored` → `calm` → `disgusted` → `tired` → `sleepy` → `sleep` → `cat` → (снова с начала).
 
+`Пример команды для вывода эмоции: rosrun sound_mouth_sync emotion_node.py _emotion_cycle_enabled:=true _emotion_cycle_interval_sec:=3.0`
+
 | Параметр (на `mouth_emotion_node`) | По умолчанию | Смысл |
 |-----------------------------------|---------------|--------|
 | `~emotion_cycle_enabled` | `false` | Включить автоматический круг |
