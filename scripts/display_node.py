@@ -302,14 +302,14 @@ def main():
         )
 
     def _should_animate_cat():
-        return _base_anim_candidate() and _effective_emotion() == "cat" and len(cat_animation_frames) >= 2
+        # Animate "cat" even without external cat_frame* assets:
+        # compose_emotion_frame falls back to built-in cat animation which depends on time.
+        return _base_anim_candidate() and _effective_emotion() == "cat"
 
     def _should_animate_sleep():
-        return (
-            _base_anim_candidate()
-            and _effective_emotion() == "sleep"
-            and len(sleep_animation_frames) >= 2
-        )
+        # Animate "sleep" even without external sleep_frame* assets:
+        # compose_emotion_frame falls back to built-in yawn/zzz animation which depends on time.
+        return _base_anim_candidate() and _effective_emotion() == "sleep"
 
     def _should_animate_sleepy():
         return (

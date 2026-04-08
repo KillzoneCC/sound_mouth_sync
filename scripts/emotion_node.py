@@ -111,9 +111,13 @@ def main():
 
     def on_emotion(msg: String):
         new_emo = _normalize_emotion(msg.data, current_emotion[0])
-        if new_emo != current_emotion[0]:
-            current_emotion[0] = new_emo
-            emotion_pub.publish(String(data=current_emotion[0]))
+        # Important: even if emotion value didn't change (e.g. user re-publishes the
+        # same emotion), we forward it. display_node uses any received emotion
+        # message as "activity" signal to clear idle overlay (idle_sleep_active).
+        # Without forwarding on equality, idle overlay may "stick" and look like
+        # manual override is ignored.
+        current_emotion[0] = new_emo
+        emotion_pub.publish(String(data=current_emotion[0]))
 
     rospy.Subscriber(in_mode_topic, String, on_mode, queue_size=1)
     rospy.Subscriber(in_emotion_topic, String, on_emotion, queue_size=1)

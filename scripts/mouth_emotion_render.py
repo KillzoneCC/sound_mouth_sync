@@ -415,8 +415,10 @@ def draw_emotion(emotion, width, height):
         my = cy + 2
         draw.line((cx - rs_m, my, cx + rs_m, my), fill=255, width=lw_t)
         le = max(4, r // 4)
-        draw.line((cx - r // 2, cy - 10, cx - r // 2 - le, cy - 5), fill=255, width=1)
-        draw.line((cx + r // 2, cy - 10, cx + r // 2 + le, cy - 5), fill=255, width=1)
+        draw.line((cx - r // 2, cy - 10, cx - r //
+                  2 - le, cy - 5), fill=255, width=1)
+        draw.line((cx + r // 2, cy - 10, cx + r //
+                  2 + le, cy - 5), fill=255, width=1)
     elif emotion == "sleepy":
         sx = float(width) / 128.0
         sy = float(height) / 64.0
@@ -617,9 +619,11 @@ def compose_emotion_frame(
                     return custom_emotion_cache["sleepy"]
                 return draw_sleepy_animated(width, height, sleepy_state)
             if emo == "cat":
-                return draw_emotion("neutral", width, height)
+                elapsed = time.time() - builtin_idle_state.get("start", time.time())
+                return draw_builtin_idle_cat(width, height, elapsed)
             if emo == "sleep":
-                return draw_emotion("neutral", width, height)
+                elapsed = time.time() - builtin_idle_state.get("start", time.time())
+                return draw_builtin_idle_yawn_zzz(width, height, elapsed)
             frame = builtin_idle_get_frame(
                 width, height, builtin_idle_state, sleepy_state)
             if frame is not None:
@@ -627,7 +631,7 @@ def compose_emotion_frame(
     if emo == "sleepy":
         return draw_sleepy_animated(width, height, sleepy_state)
     if emo == "cat":
-        return draw_emotion("neutral", width, height)
+        return draw_builtin_idle_cat(width, height, time.time())
     if emo == "sleep":
-        return draw_emotion("neutral", width, height)
+        return draw_builtin_idle_yawn_zzz(width, height, time.time())
     return draw_emotion(emo, width, height)
